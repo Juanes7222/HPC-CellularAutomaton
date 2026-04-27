@@ -1,20 +1,6 @@
-#include <stdio.h>
+#include <math.h>
 #include "simulation.h"
 
-/*
- * Computes the next generation into road->next_cells using the traffic rule:
- *
- *   R(t+1, i) = ( R(t,i) AND R(t,i+1) )       <- car blocked, stays
- *             OR ( R(t,i-1) AND NOT R(t,i) )   <- car behind moves in
- *
- * All reads come from road->cells (immutable during this function).
- * All writes go to road->next_cells (distinct allocation).
- * Every iteration is independent -> data-race free -> safe to parallelise.
- *
- * When compiled with -fopenmp the #pragma activates OpenMP parallelism.
- * When compiled without -fopenmp the pragma is silently skipped and
- * the loop runs as a normal sequential for loop. No #ifdef needed.
- */
 static void compute_next_generation(Road *road)
 {
     const int *current = road->cells;
@@ -63,15 +49,49 @@ double simulation_step(Road *road)
     return (double)cars_that_moved / (double)road->car_count;
 }
 
-double simulation_run(Road *road, int warmup_steps, int measure_steps)
+double simulation_measure(Road *road, int measure_steps)
 {
-    for (int step = 0; step < warmup_steps; step++)
-        simulation_step(road);
-
     double velocity_sum = 0.0;
     for (int step = 0; step < measure_steps; step++)
         velocity_sum += simulation_step(road);
 
     if (measure_steps == 0) return 0.0;
     return velocity_sum / (double)measure_steps;
+}
+
+int simulation_warmup_until_steady_state(Road   *road,
+                                         int     window_size,
+                                         double  convergence_threshold,
+                                         int     min_steps,
+                                         int     max_warmup_steps)
+{
+    double previous_window_mean = -1.0;  /* sentinel: no previous window yet */
+    double current_window_sum   =  0.0;
+    int    steps_in_window      =  0;
+    int    total_steps_done     =  0;
+
+    while (total_steps_done < max_warmup_steps) {
+        double velocity = simulation_step(road);
+        total_steps_done++;
+        current_window_sum += velocity;
+        steps_in_window++;
+
+        if (steps_in_window < window_size) continue;
+
+        double current_window_mean = current_window_sum / (double)window_size;
+
+        int past_minimum_steps   = total_steps_done >= min_steps;
+        int have_previous_window = previous_window_mean >= 0.0;
+
+        if (past_minimum_steps && have_previous_window) {
+            double delta = fabs(current_window_mean - previous_window_mean);
+            if (delta < convergence_threshold) break;
+        }
+
+        previous_window_mean = current_window_mean;
+        current_window_sum   = 0.0;
+        steps_in_window      = 0;
+    }
+
+    return total_steps_done;
 }
