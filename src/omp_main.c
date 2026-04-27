@@ -1,3 +1,23 @@
+/*
+ * omp_main.c — OpenMP entry point for the traffic automaton.
+ *
+ * Usage:
+ *   ./bin/traffic_omp <road_length> <density> <max_warmup_steps> <measure_steps> <threads>
+ *
+ * Output (stdout, space-separated on one line):
+ *   <wall_time_ms> <avg_velocity>
+ *
+ *   wall_time_ms  — elapsed time of the measure phase only (warmup excluded).
+ *   avg_velocity  — mean velocity over the measure phase. Converged runs at
+ *                   the same (N, density) should produce consistent values
+ *                   across repetitions; large variance indicates the warmup
+ *                   ceiling was too low and steady state was not reached.
+ *
+ * Output (stderr):
+ *   Warmup diagnostic and active thread count. The benchmark harness reads
+ *   only stdout.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
@@ -30,7 +50,10 @@ static void log_warmup_result(int steps_done, int max_warmup_steps)
 
 int main(int argc, char *argv[])
 {
-    if (argc != EXPECTED_ARGC) { print_usage(argv[0]); return EXIT_FAILURE; }
+    if (argc != EXPECTED_ARGC) {
+        print_usage(argv[0]);
+        return EXIT_FAILURE;
+    }
 
     int    road_length      = cli_parse_positive_int(argv[1], "road_length");
     double density          = cli_parse_density(argv[2]);
@@ -46,16 +69,23 @@ int main(int argc, char *argv[])
     if (road == NULL) return EXIT_FAILURE;
 
     int warmup_steps_done = simulation_warmup_until_steady_state(
-        road, WARMUP_WINDOW_SIZE, WARMUP_CONVERGENCE_THRESHOLD,
-        WARMUP_MIN_STEPS, max_warmup_steps);
+        road,
+        WARMUP_WINDOW_SIZE,
+        WARMUP_CONVERGENCE_THRESHOLD,
+        WARMUP_MIN_STEPS,
+        max_warmup_steps
+    );
     log_warmup_result(warmup_steps_done, max_warmup_steps);
 
     struct timespec clock_start;
     timing_start(&clock_start);
-    simulation_measure(road, measure_steps);
+
+    double avg_velocity = simulation_measure(road, measure_steps);
+
     double wall_time_ms = timing_elapsed_ms(clock_start);
 
     road_destroy(road);
-    printf("%.3f\n", wall_time_ms);
+
+    printf("%.3f %.6f\n", wall_time_ms, avg_velocity);
     return EXIT_SUCCESS;
 }
