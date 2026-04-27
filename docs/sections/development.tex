@@ -1,0 +1,247 @@
+\section{Desarrollo de la implementación}
+
+Esta sección describe cómo se construyó el simulador de tráfico unidimensional con paralelismo OpenMP, explicando tanto las decisiones algorítmicas como las consecuencias computacionales de cada una. La premisa central fue mantener una única base de código para la lógica de simulación y variar exclusivamente el mecanismo de ejecución, de forma que cualquier diferencia de rendimiento sea atribuible al grado de paralelismo y no a diferencias en el algoritmo.
+
+\subsection{Modelo del autómata celular de tráfico}
+
+El sistema modela una carretera circular de $N$ celdas con condiciones de contorno periódicas. Cada celda $i \in \{0, 1, \ldots, N-1\}$ puede estar vacía ($R = 0$) o contener un carro ($R = 1$). La velocidad máxima es $v_{\max} = 1$, por lo que en cada paso de tiempo un carro puede avanzar a la celda siguiente si esta está libre, o permanecer bloqueado si está ocupada. La regla de actualización se define formalmente como
+
+\begin{equation}
+    R(t+1,\, i) = \bigl[R(t,i) \wedge R(t,\, (i+1) \bmod N)\bigr] \;\vee\; \bigl[R(t,\, (i-1) \bmod N) \wedge \neg R(t,i)\bigr].
+    \label{eq:regla}
+\end{equation}
+
+El primer término captura el caso en que el carro en $i$ no puede avanzar porque la celda siguiente está ocupada. El segundo captura el caso en que un carro en $i-1$ avanza a la celda $i$, que estaba libre. La condición $\neg R(t,i)$ en el segundo término es necesaria para evitar que una celda reciba dos carros simultáneamente.
+
+En la implementación, los valores booleanos se almacenan como enteros con signo de 32 bits. La regla~\eqref{eq:regla} se traduce directamente a operaciones de bit:
+
+\begin{equation}
+    next[i] = (here \;\&\; ahead) \;\mid\; (behind \;\&\; \textasciitilde here \;\&\; 1),
+\end{equation}
+
+donde \&\,1 enmascara el complemento para suprimir la extensión de signo que produce \textasciitilde sobre enteros con signo de 32 bits; sin esa máscara, \textasciitilde 0 produce 0xFFFFFFFF en lugar de 1, lo que corrompería el conteo de carros.
+
+Todas las lecturas de la generación $t$ provienen del arreglo cells y todas las escrituras de la generación $t+1$ van al arreglo next\_cells. Como ambos arreglos son distintos y cada posición $i$ de la nueva generación depende exclusivamente de posiciones de la generación anterior, todas las iteraciones del bucle son independientes y no existe ninguna dependencia de datos entre ellas.
+
+\subsection{Velocidad media y estado estacionario}
+
+La velocidad media en el paso $t$ se define como la fracción de carros que se desplazaron:
+
+\begin{equation}
+    v(t) = \frac{1}{N_c} \sum_{i=0}^{N-1} \mathbf{1}\bigl[R(t,i) = 1 \;\wedge\; R(t+1,i) = 0\bigr],
+    \label{eq:velocidad}
+\end{equation}
+
+donde $N_c$ es el número total de carros en la carretera, que es una cantidad conservada: la regla~\eqref{eq:regla} nunca crea ni destruye carros. Esta conservación se verifica explícitamente en los tests de corrección.
+
+Partiendo de una distribución inicial aleatoria de carros, el sistema atraviesa un transitorio durante el cual $v(t)$ fluctúa mientras los carros se reorganizan. Después de suficientes pasos, $v(t)$ converge a un valor prácticamente constante denominado velocidad asintótica $v_\infty$, que es la cantidad de interés físico. La velocidad que reporta el benchmark es el promedio sobre la fase de medición:
+
+\begin{equation}
+    v_\infty \approx \bar{v} = \frac{1}{T_m} \sum_{t = T_w + 1}^{T_w + T_m} v(t),
+    \label{eq:vasint}
+\end{equation}
+
+donde $T_w$ es el número de pasos de calentamiento y $T_m$ es el número de pasos de medición.
+
+\subsection{Criterio de convergencia del calentamiento}
+
+La duración del transitorio no es fija: depende tanto de la densidad como de $N$. Un calentamiento con número de pasos fijo puede ser insuficiente para densidades cercanas al punto de transición de fase ($\rho \approx 0.5$), donde el transitorio es máximo, o innecesariamente largo para densidades extremas donde el sistema converge en pocas decenas de pasos.
+
+Para detectar la convergencia de forma adaptativa, se compara la velocidad media en dos ventanas temporales contiguas de $W$ pasos. La condición de parada es
+
+\begin{equation}
+    \left| \bar{v}_{[t-W,\, t]} - \bar{v}_{[t-2W,\, t-W]} \right| < \varepsilon,
+    \label{eq:criterio}
+\end{equation}
+
+con $W = 50$, $\varepsilon = 10^{-4}$ y un mínimo de 200 pasos antes de evaluar el criterio para evitar falsos positivos durante la fase inicial del transitorio. El parámetro max\_warmup\_steps, pasado como argumento al binario, actúa como techo: si la condición~\eqref{eq:criterio} no se alcanza antes de este límite, el calentamiento termina igualmente. En el script de benchmark este techo se fija como $\max(N / 10,\; 2000)$, valor que garantiza al menos una revolución completa de información alrededor de la carretera. El número de pasos de calentamiento realmente ejecutados se registra en stderr como diagnóstico, sin contaminar el stdout que leen los scripts.
+
+\subsection{Arquitectura de datos}
+
+La estructura central es Road, que encapsula el estado completo de la simulación:
+
+\begin{itemize}
+    \item cells: puntero al estado de la generación actual, usado exclusivamente para lectura dentro de un paso.
+    \item next\_cells: puntero al buffer de la generación siguiente, usado exclusivamente para escritura.
+    \item length: número de celdas $N$.
+    \item car\_count: número de carros $N_c$, invariante durante toda la simulación.
+\end{itemize}
+
+Ambos buffers se reservan en road\_create con una única llamada a malloc por buffer. No se realiza ninguna asignación de memoria dentro del bucle de simulación, lo que elimina el ruido del asignador dinámico de las mediciones de tiempo. Al finalizar cada paso, los punteros cells y next\_cells se intercambian mediante una permutación de punteros de costo $O(1)$, sin copiar datos.
+
+\begin{figure}[H]
+\centering
+\fbox{%
+\begin{minipage}{0.92\textwidth}
+\centering
+\textbf{Flujo de un paso de simulación}\\[4pt]
+Leer cells $\rightarrow$ Escribir next\_cells (regla~\eqref{eq:regla})
+$\rightarrow$ Contar carros desplazados (ecuación~\eqref{eq:velocidad})
+$\rightarrow$ Intercambiar punteros\\[2pt]
+Si fase de calentamiento: evaluar criterio~\eqref{eq:criterio}; si no: acumular $v(t)$
+\end{minipage}}
+\caption{Ciclo compartido por la implementación secuencial y la paralela.}
+\label{fig:flujo_paso}
+\end{figure}
+
+El estado inicial de cells se genera con rand en road\_create, sembrando el generador con time(NULL). La implementación no controla la semilla explícitamente porque la magnitud de interés ($v_\infty$) es estadísticamente robusta respecto a la distribución inicial, como corroboran las varianzas de avg\_velocity entre repeticiones en el CSV de resultados.
+
+\subsection{Implementación secuencial}
+
+El binario traffic\_seq se compila sin el flag -fopenmp. Las directivas \#pragma omp presentes en simulation.c son ignoradas silenciosamente por el compilador conforme a lo establecido en ISO/IEC 9899:2011, sección~6.10.6, que autoriza al preprocesador a descartar cualquier pragma no reconocido. Como consecuencia, el binario no enlaza libgomp, no crea ningún equipo de hilos en tiempo de ejecución y el bucle de actualización se ejecuta como un bucle for ordinario. Esta propiedad puede verificarse inspeccionando las dependencias del binario con ldd bin/traffic\_seq, que no lista libgomp.so.
+
+La medición de tiempo utiliza clock\_gettime(CLOCK\_MONOTONIC) de time.h, accesible bajo \_POSIX\_C\_SOURCE=200809L con -std=c11. Esta macro de prueba de características se define en CFLAGS del Makefile en lugar de en los encabezados, siguiendo la práctica estándar de que las macros de prueba pertenecen al entorno de compilación y no al código fuente. El reloj CLOCK\_MONOTONIC es inmune a ajustes del reloj del sistema (NTP, adjtime) y garantiza mediciones de tiempo transcurrido fiables. El cronómetro se activa inmediatamente antes de la fase de medición y se detiene al finalizar, excluyendo el calentamiento del tiempo reportado.
+
+La función de convergencia simulation\_warmup\_until\_steady\_state utiliza fabs de math.h para evaluar el criterio~\eqref{eq:criterio}, lo que requiere enlazar con -lm.
+
+La interfaz de línea de comandos es:
+
+\begin{center}
+traffic\_seq $N$ $\rho$ max\_warmup $T_m$
+\end{center}
+
+La salida estándar contiene exclusivamente dos valores en una sola línea: el tiempo de pared en milisegundos y la velocidad media $\bar{v}$ de la fase de medición, separados por un espacio. Esta separación entre tiempo y velocidad permite al script de benchmark detectar automáticamente ejecuciones que no alcanzaron el estado estacionario: si $\bar{v}$ presenta alta varianza entre repeticiones de los mismos parámetros, el techo de calentamiento fue insuficiente.
+
+\subsection{Implementación paralela con OpenMP}
+
+El binario traffic\_omp se compila con -fopenmp, que activa el preprocesador de pragmas OpenMP, define la macro \_OPENMP y enlaza libgomp. El número de hilos no se fija en tiempo de compilación sino que se lee como argumento de línea de comandos y se comunica al runtime mediante omp\_set\_num\_threads, declarada en omp.h. Esto permite que un único binario sirva para todos los experimentos de escalado fuerte sin necesidad de recompilación.
+
+La interfaz amplía la del binario secuencial con un argumento adicional:
+
+\begin{center}
+traffic\_omp $N$ $\rho$ max\_warmup $T_m$ $p$
+\end{center}
+
+donde $p$ es el número de hilos solicitado. El valor efectivo se confirma con omp\_get\_max\_threads() y se registra en stderr.
+
+Dentro de simulation.c existen dos regiones paralelas independientes por paso de tiempo.
+
+La primera, en compute\_next\_generation, aplica la regla~\eqref{eq:regla} a cada celda:
+
+\begin{verbatim}
+#pragma omp parallel for schedule(static)
+for (int i = 0; i < length; i++) { ... }
+\end{verbatim}
+
+La cláusula schedule(static) asigna bloques contiguos de celdas a cada hilo con partición determinista en tiempo de compilación. Esta elección es apropiada porque el trabajo por celda es uniforme: la regla~\eqref{eq:regla} implica exactamente tres lecturas, dos operaciones lógicas y una escritura para cada posición, independientemente del estado de la celda. Con trabajo uniforme, schedule(static) tiene menor overhead de planificación que dynamic o guided, y produce un patrón de acceso a memoria favorable para el prefetcher al asignar rangos contiguos a cada hilo.
+
+La independencia de las iteraciones es estructural: todas las lecturas provienen de current[] y todas las escrituras van a next[], que son punteros a arreglos distintos. No existe ninguna dependencia de datos entre iteraciones, lo que garantiza ausencia de condiciones de carrera sin necesidad de secciones críticas ni mecanismos de sincronización dentro del bucle.
+
+La segunda región paralela, en count\_departed\_cars, cuenta los carros que se desplazaron para calcular $v(t)$:
+
+\begin{verbatim}
+#pragma omp parallel for reduction(+:departed) schedule(static)
+for (int i = 0; i < length; i++)
+    departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+\end{verbatim}
+
+La cláusula reduction(+:departed) instruye a OpenMP a mantener una copia privada del acumulador en cada hilo y combinarlas con suma al finalizar la región paralela. Sin esta cláusula, los incrementos concurrentes sobre una variable compartida constituirían una condición de carrera que produciría conteos incorrectos.
+
+Entre las dos regiones paralelas no se requiere sincronización explícita porque la segunda lee old\_cells y new\_cells, que son los mismos arreglos que la primera escribió en next[] y leyó de current[]. La barrera implícita al final de la primera directiva parallel for garantiza que todos los hilos han completado sus escrituras en next\_cells antes de que cualquier hilo comience count\_departed\_cars.
+
+La fase de calentamiento no se paralleliza de forma especial: simulation\_warmup\_until\_steady\_state llama iterativamente a simulation\_step, que ya contiene las dos regiones paralelas. El criterio de convergencia~\eqref{eq:criterio} se evalúa en el hilo maestro fuera de las regiones paralelas, lo que es correcto porque accede únicamente a acumuladores escalares locales a la función.
+
+\subsection{Métricas de rendimiento}
+
+El script de benchmark registra el tiempo de pared $T(p)$ de la fase de medición para cada configuración $(N, \rho, p)$. A partir del CSV generado, las métricas de escalado fuerte se calculan como:
+
+\begin{equation}
+    S(p) = \frac{T_{\text{seq}}}{T_{\text{omp}}(p)},
+    \qquad
+    E(p) = \frac{S(p)}{p} \times 100\%.
+    \label{eq:speedup}
+\end{equation}
+
+La eficiencia $E(p)$ cuantifica la fracción de capacidad paralela efectivamente utilizada. Para este autómata, cuyo kernel tiene una intensidad aritmética de aproximadamente $0.4$ operaciones por byte de memoria transferida, se espera que $E(p)$ decrezca con $N$ pequeño (donde el overhead de creación del equipo de hilos domina) y con $N$ muy grande (donde el ancho de banda de memoria es el cuello de botella y agregar hilos no acelera la transferencia de datos).
+
+
+% ============================================================
+\subsection{Diseño del script de pruebas}
+% ============================================================
+
+El script bench\_traffic.sh actúa como harness de medición: su única responsabilidad es invocar los binarios con los parámetros correctos, capturar su salida y persistirla en un CSV. No realiza ningún análisis, cálculo de speedup ni generación de gráficas — esas tareas corresponden a un script posterior. Esta separación es deliberada: mezclar medición y análisis en el mismo script crea acoplamiento innecesario y dificulta repetir solo una de las dos fases.
+
+\subsection{Matriz de configuraciones}
+
+El harness define dos experimentos que cubren las preguntas de rendimiento centrales del trabajo.
+
+El experimento de escalado mide todas las combinaciones de los seis valores de $N$ con los seis conteos de hilos $\{0, 2, 4, 6, 8, 12\}$ a densidad fija $\rho = 0.50$. El valor $p = 0$ indica el binario secuencial traffic\_seq; cualquier $p > 0$ invoca traffic\_omp con ese número de hilos. Los valores de $N$ se eligen para cubrir cada nivel de la jerarquía de memoria:
+
+\begin{center}
+\begin{tabular}{rrl}
+\hline
+$N$ & Working set & Nivel esperado \\
+\hline
+8\,000   & 64 KB  & L1 \\
+64\,000  & 512 KB & L2 \\
+500\,000 & 4 MB   & L3 superior \\
+2\,000\,000  & 16 MB & Frontera L3/DRAM \\
+5\,000\,000  & 40 MB & DRAM (referencia de escalado fuerte) \\
+10\,000\,000 & 80 MB & DRAM saturada \\
+\hline
+\end{tabular}
+\end{center}
+
+El working set es $2 \times N \times 4$ bytes, correspondiente a los dos buffers enteros de la estructura Road.
+
+El experimento de densidad fija $N = 2\,000\,000$ y mide los hilos $\{0, 12\}$ sobre los cinco valores de densidad $\{0.10,\, 0.30,\, 0.50,\, 0.70,\, 0.90\}$. Las filas que coinciden con configuraciones ya medidas en el experimento de escalado (concretamente $\rho = 0.50$ con $p \in \{0, 12\}$) no generan mediciones duplicadas gracias al mecanismo de reanudación descrito más adelante.
+
+El número total de configuraciones únicas es 44 y cada una se repite 10 veces, produciendo 440 filas en el CSV.
+
+\subsection{Orden de iteración y validez de las mediciones}
+
+La decisión más importante del diseño del bucle de medición es el orden de los índices: las repeticiones constituyen el bucle externo y las configuraciones el interno. En cada ronda de repetición se ejecutan todas las configuraciones exactamente una vez antes de comenzar la siguiente ronda.
+
+La alternativa intuitiva — repeticiones en el bucle interno — produciría mediciones inválidas para valores de $N$ pequeños. Un arreglo de $N = 8\,000$ enteros ocupa 64 KB, que cabe completamente en la caché L1 de un núcleo. Con el bucle equivocado, la repetición 2 del mismo $N$ encontraría el working set ya residente en L1 desde la repetición 1, midiendo efectivamente rendimiento de caché caliente en lugar del rendimiento real del algoritmo. La distorsión puede alcanzar el 30--50\% en tiempo de ejecución para los valores de $N$ menores.
+
+Con el orden correcto, entre dos mediciones consecutivas de $N = 8\,000$ intervienen configuraciones con $N = 10\,000\,000$ cuyo working set de 80 MB vacía completamente la caché LLC, garantizando condiciones de caché fría en cada medición.
+
+\subsection{Acondicionamiento del sistema}
+
+Antes de comenzar el bucle de medición, el harness aplica cuatro modificaciones al sistema operativo para reducir la varianza de los tiempos:
+
+\begin{enumerate}
+    \item El gobernador de frecuencia de CPU se fija en performance mediante escritura en /sys/devices/system/cpu/cpufreq/policy*/scaling\_governor, deshabilitando DVFS. Sin esto, el procesador puede operar a frecuencias inferiores a la nominal durante el primer paso de cada configuración mientras el gobernador reacciona a la carga.
+    \item La aleatorización del espacio de direcciones se deshabilita fijando /proc/sys/kernel/randomize\_va\_space a 0. Esto garantiza que los arreglos cells y next\_cells caigan en las mismas páginas físicas entre repeticiones, eliminando variabilidad en el comportamiento del TLB.
+    \item Las mediciones paralelas se ejecutan con prioridad de tiempo real FIFO mediante sudo chrt -f 99, lo que evita que el planificador de Linux desaloje los hilos de OpenMP durante una medición.
+    \item Los binarios se fijan a núcleos específicos con taskset. El binario secuencial se ancla a un único núcleo para eliminar migraciones del planificador; el binario OpenMP recibe acceso a todos los núcleos del conjunto de benchmark. Los valores originales del gobernador y del flag de ASLR se restauran automáticamente al terminar mediante un trap sobre la señal EXIT.
+\end{enumerate}
+
+El harness solicita credenciales sudo antes de comenzar y las renueva cada 55 segundos mediante un proceso de fondo, evitando que la expiración del ticket interrumpa una medición en curso durante un benchmark que puede durar varias horas.
+
+\subsection{Techo de calentamiento adaptativo}
+
+El techo de pasos de calentamiento que el harness pasa a cada binario se calcula como
+
+\begin{equation}
+    T_{w,\max} = \max\!\left(\frac{N}{10},\; 2000\right).
+    \label{eq:techo}
+\end{equation}
+
+El factor $N/10$ garantiza que el techo sea al menos proporcional al tiempo que tarda una perturbación en recorrer la carretera completa, del orden de $N$ pasos, con un margen de seguridad de un orden de magnitud. El piso de 2000 evita techos irrazonablemente bajos para $N$ pequeños. El binario puede terminar el calentamiento antes de alcanzar este techo si el criterio de convergencia~\eqref{eq:criterio} se satisface, lo que ocurre en la práctica para densidades extremas ($\rho \leq 0.1$ o $\rho \geq 0.9$) en pocas centenas de pasos.
+
+\subsection{Reanudación y persistencia de resultados}
+
+Cada fila se escribe en el CSV inmediatamente tras la medición con una llamada a sync, garantizando que el archivo en disco esté actualizado incluso si el proceso termina de forma abrupta. Antes de cada medición, el harness consulta el CSV para verificar si ya existe una fila con la misma combinación de impl, threads, road\_length, density y repetition. Si la fila existe, la medición se salta. Este mecanismo permite reanudar un benchmark interrumpido sin duplicar datos ni perder las mediciones ya realizadas.
+
+\subsection{Formato del CSV de resultados}
+
+El archivo data.csv tiene siete columnas:
+
+\begin{center}
+\begin{tabular}{ll}
+\hline
+Columna & Descripción \\
+\hline
+impl          & Binario usado: traffic\_seq o traffic\_omp \\
+threads       & Número de hilos (0 para la versión secuencial) \\
+road\_length  & Tamaño de la carretera $N$ \\
+density       & Densidad inicial de carros $\rho$ \\
+repetition    & Índice de repetición (1 a 10) \\
+wall\_time\_ms & Tiempo de pared de la fase de medición en milisegundos \\
+avg\_velocity & Velocidad media $\bar{v}$ sobre los $T_m$ pasos medidos \\
+\hline
+\end{tabular}
+\end{center}
+
+La columna avg\_velocity cumple una función de diagnóstico: para una combinación $(N, \rho)$ dada, las 10 repeticiones deben producir valores de $\bar{v}$ con varianza inferior a $10^{-3}$ si el sistema alcanzó el estado estacionario antes de iniciar la medición. Además, los binarios secuencial y paralelo deben coincidir en $\bar{v}$ para los mismos parámetros, ya que implementan el mismo algoritmo; una discrepancia sistemática indicaría una condición de carrera en la versión OpenMP.
