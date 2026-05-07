@@ -327,10 +327,35 @@ print_banner() {
 }
 
 # ---------------------------------------------------------------------------
+# Sleep / suspend inhibitor
+# ---------------------------------------------------------------------------
+
+inhibit_sleep() {
+    [[ -n "${BENCH_INHIBIT_ACTIVE:-}" ]] && return 0
+
+    if ! command -v systemd-inhibit &>/dev/null; then
+        log_warn "systemd-inhibit not found — machine may suspend during benchmark."
+        log_warn "Consider running: sudo systemctl mask sleep.target suspend.target"
+        return 0
+    fi
+
+    log_info "Acquiring sleep/suspend inhibitor via systemd-inhibit..."
+    exec env BENCH_INHIBIT_ACTIVE=1 \
+        systemd-inhibit \
+            --what=sleep:suspend:hibernate:idle \
+            --who="bench_traffic" \
+            --why="Benchmark in progress — do not suspend" \
+            --mode=block \
+            bash "${BASH_SOURCE[0]}" "$@"
+}
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 main() {
+    inhibit_sleep "$@"
+    
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
 
     if ! binaries_are_built; then
