@@ -3,66 +3,59 @@
 #
 # Total Lost Samples: 0
 #
-# Samples: 647  of event 'cpu/cycles/P'
-# Event count (approx.): 3021598231
+# Samples: 573  of event 'cpu/cycles/P'
+# Event count (approx.): 2681705135
 #
-# Overhead  Command          Shared Object      Symbol                              
-# ........  ...............  .................  ....................................
+# Overhead  Command          Shared Object      Symbol                         
+# ........  ...............  .................  ...............................
 #
-    74.38%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
+    79.90%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
             |
             ---compute_next_generation
                simulation_step
                |          
-               |--45.80%--simulation_warmup_until_steady_state
+               |--49.00%--simulation_warmup_until_steady_state
                |          main
                |          0x7ffff7cb96c1
                |          __libc_start_main
                |          _start
                |          
-                --28.58%--simulation_measure
+                --30.90%--simulation_measure
                           main
                           0x7ffff7cb96c1
                           __libc_start_main
                           _start
 
-    24.06%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+    20.08%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
             |
             ---count_departed_cars
                simulation_step
                |          
-               |--14.02%--simulation_warmup_until_steady_state
+               |--12.52%--simulation_measure
                |          main
                |          0x7ffff7cb96c1
                |          __libc_start_main
                |          _start
                |          
-                --10.04%--simulation_measure
+                --7.56%--simulation_warmup_until_steady_state
                           main
                           0x7ffff7cb96c1
                           __libc_start_main
                           _start
 
-     0.15%  traffic_seq_per  [nvidia]           [k] 0x000000000030cea6
-     0.15%  traffic_seq_per  [kernel.kallsyms]  [k] update_cfs_group
-     0.15%  traffic_seq_per  [kernel.kallsyms]  [k] sched_use_asym_prio
-     0.15%  traffic_seq_per  [nvidia]           [k] 0x0000000000266dc7
-     0.15%  traffic_seq_per  [nvidia]           [k] 0x0000000000266b3d
-     0.15%  traffic_seq_per  [kernel.kallsyms]  [k] read_tsc
-     0.15%  traffic_seq_per  [nvidia]           [k] 0x0000000000266b64
-     0.15%  traffic_seq_per  [kernel.kallsyms]  [k] native_queued_spin_lock_slowpath
-     0.15%  traffic_seq_per  [nvidia]           [k] 0x0000000000266b60
-     0.15%  traffic_seq_per  [kernel.kallsyms]  [k] raw_spin_rq_lock_nested
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] srso_alias_safe_ret
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] next_uptodate_folio
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] count_memcg_events
-     0.00%  perf-exec        [kernel.kallsyms]  [k] amd_pmu_lbr_enable_all
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_event_update_userpage
-     0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
+     0.01%  traffic_seq_per  traffic_seq_perf   [.] seed_cells_randomly
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] get_mem_cgroup_from_mm
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] restore_fpregs_from_fpstate
      0.00%  perf-exec        [kernel.kallsyms]  [k] native_write_msr
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_event_update_userpage
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] calc_timer_values
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
+     0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
      0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
+     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_ibs_handle_irq
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_write_msr
 
 
 #
-# (Tip: To see how parallelism changes over time, try: perf report -F time,latency,parallelism --time-quantum=1s)
+# (Tip: Boolean options have negative forms, e.g.: perf report --no-children)
 #

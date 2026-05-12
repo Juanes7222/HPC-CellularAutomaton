@@ -1,24 +1,20 @@
-# started on Tue May 12 10:25:40 2026
+# started on Tue May 12 12:11:43 2026
 
 
- Performance counter stats for 'bin/traffic_seq_perf 2000000 0.50 200000 1000':
+ Performance counter stats for 'bin/traffic_seq_perf 2000000 0.50 200000 1000' (5 runs):
 
-      130160583507      cycles                                                                  (50.00%)
-      479754729313      instructions                                                            (49.99%)
-        4645399549      cache-references                                                        (50.00%)
-          25167970      cache-misses                                                            (50.00%)
-      134449763158      L1-dcache-loads                                                         (50.00%)
-        1791475497      L1-dcache-load-misses                                                   (50.00%)
+      132668460082      cycles                                                                  ( +-  3.59% )  (49.99%)
+      488027702570      instructions                                                            ( +-  3.75% )  (50.00%)
+        4734577818      cache-references                                                        ( +-  3.69% )  (50.00%)
+          26706701      cache-misses                                                            ( +-  2.80% )  (50.02%)
+      136757636925      L1-dcache-loads                                                         ( +-  3.69% )  (50.02%)
+        1824008178      L1-dcache-load-misses                                                   ( +-  3.71% )  (50.01%)
    <not supported>      LLC-loads                                                             
    <not supported>      LLC-load-misses                                                       
-           6603835      dTLB-loads                                                              (50.01%)
-             20359      dTLB-load-misses                                                        (50.00%)
-       28088542287      branch-instructions                                                     (50.00%)
-         140764639      branch-misses                                                           (50.00%)
+           6993834      dTLB-loads                                                              ( +-  2.87% )  (50.00%)
+             98632      dTLB-load-misses                                                        ( +- 70.31% )  (50.00%)
+       28544807596      branch-instructions                                                     ( +-  3.78% )  (49.98%)
+         146319323      branch-misses                                                           ( +-  1.01% )  (49.98%)
 
-      27.967207173 seconds time elapsed
-
-      27.747094000 seconds user
-       0.001984000 seconds sys
-
+      28.507374220 +- 1.022020064 seconds time elapsed  ( +-  3.59% )
 

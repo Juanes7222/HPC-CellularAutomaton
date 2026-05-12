@@ -14,16 +14,16 @@ Annotation:       on
 --------------------------------------------------------------------------------
 Ir____________________ 
 
-9,648,699,965 (100.0%)  PROGRAM TOTALS
+9,648,149,075 (100.0%)  PROGRAM TOTALS
 
 --------------------------------------------------------------------------------
 -- File:function summary
 --------------------------------------------------------------------------------
   Ir__________________________  file:function
 
-< 9,643,059,545 (99.9%, 99.9%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
+< 9,642,508,662 (99.9%, 99.9%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
   7,040,046,200 (73.0%)           compute_next_generation
-  2,602,887,573 (27.0%)           count_departed_cars
+  2,602,336,690 (27.0%)           count_departed_cars
 
 --------------------------------------------------------------------------------
 -- Function:file summary
@@ -32,7 +32,7 @@ Ir____________________
 
 > 7,040,046,200 (73.0%, 73.0%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
-> 2,602,887,573 (27.0%, 99.9%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+> 2,602,336,690 (27.0%, 99.9%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
 --------------------------------------------------------------------------------
 -- Annotated source file: /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
@@ -68,7 +68,7 @@ Ir___________________
             .          
             .          #pragma omp parallel for reduction(+:departed) schedule(static)
   563,211,000  (5.8%)      for (int i = 0; i < length; i++)
-2,039,641,373 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+2,039,090,490 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
             .          
         2,200  (0.0%)      return departed;
         4,400  (0.0%)  }
@@ -142,10 +142,10 @@ Ir___________________
 --------------------------------------------------------------------------------
 Ir___________________ 
 
-9,643,059,545 (99.9%)    annotated: files known & above threshold & readable, line numbers known
+9,642,508,662 (99.9%)    annotated: files known & above threshold & readable, line numbers known
             0            annotated: files known & above threshold & readable, line numbers unknown
             0          unannotated: files known & above threshold & two or more non-identical
             0          unannotated: files known & above threshold & unreadable 
     1,984,420  (0.0%)  unannotated: files known & below threshold
-    3,656,000  (0.0%)  unannotated: files unknown
+    3,655,993  (0.0%)  unannotated: files unknown
 
