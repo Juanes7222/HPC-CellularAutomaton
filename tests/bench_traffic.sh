@@ -3,50 +3,46 @@
 # bench_traffic.sh  --  Traffic Automaton OpenMP Benchmark
 #
 # Runs all measurement combinations and writes every result to a single CSV.
-# No analysis is performed here; that is the responsibility of a separate
-# script that reads the CSV after the benchmark completes.
+# No analysis is performed here; that is the responsibility of report.py.
 #
 # Measurement matrix
 # ------------------
 # Scaling experiment  (all N x all thread counts, density=0.50):
 #   Answers: how does parallelism scale? where does memory bandwidth limit speedup?
 #
+# Compiler-opt experiment  (same N x same thread counts, density=0.50):
+#   Answers: what is the speedup from compiler optimisation alone?
+#   Uses traffic_seq_opt (serial) and traffic_omp_opt (OpenMP) binaries,
+#   built from identical source with OPT_FLAGS (-O3 -march=native -flto ...).
+#
 # Density experiment  (N=20M, threads=seq+4+8+12, all density values):
 #   Answers: does car density (branch predictability) affect throughput?
-#   N=20M is intentionally outside N_VALUES so it represents a distinct
-#   working-set point (160 MB); deduplication applies only within the
-#   resume/incremental mechanism (row_already_recorded), NOT between
-#   the scaling and density experiments.
+#   N=20M is intentionally outside N_VALUES (dedicated 160 MB working point).
+#   Deduplication (row_already_recorded) only prevents re-running rows on
+#   --resume; it does NOT link rows between experiments.
 #
 # Loop order: repetition (outer) -> configuration (inner)
 # -------------------------------------------------------
-# This is critical for benchmark validity. If repetitions were the inner loop,
-# consecutive measurements of the same configuration would find the working set
-# already hot in cache. By running all configurations once per repetition round,
-# large-N runs (N=10M, 80 MB working set) flush the cache between consecutive
-# measurements of small-N configurations, ensuring cold-cache conditions.
+# Critical for benchmark validity: large-N runs flush the cache between
+# consecutive measurements of small-N configurations, ensuring cold-cache
+# conditions for every configuration in every repetition round.
 #
-# Convergence validation via avg_velocity
-# ----------------------------------------
-# Each binary outputs "wall_time_ms avg_velocity" on stdout. The avg_velocity
-# is the mean car velocity over the measure phase. For a given (N, density),
-# converged runs across repetitions should produce nearly identical velocity
-# values. Large variance across reps is a direct indicator that the warmup
-# ceiling was too low and steady state was not reached before timing started.
+# impl values written to CSV
+# ---------------------------
+#   traffic_seq      serial,  -O0  (baseline)
+#   traffic_seq_opt  serial,  -O3 + march=native + flto + ...
+#   traffic_omp      OpenMP,  -O0
+#   traffic_omp_opt  OpenMP,  -O3 + march=native + flto + ...
 #
-# Fixes applied (v2):
-#   [FIX-1] DENSITY_EXPERIMENT_N comment corrected: N=20M is never in N_VALUES
-#           so row_already_recorded() does not deduplicate across experiments.
-#           The comment claiming automatic cross-experiment dedup was wrong.
-#   [FIX-3] sudo_keeper_pid: 'local' declaration separated from $! assignment
-#           to avoid bash capturing $? instead of $! in combined form.
-#   [FIX-4] EXIT trap moved to immediately after sudo_keeper fork and BEFORE
-#           optimize_system, guaranteeing restore_system runs on any failure.
-#   [FIX-6] run_binary output regex changed from (\.[0-9]+)? to (\.[0-9]*)?
-#           so that integer "0" and "0." forms are accepted without triggering
-#           a spurious log_error.
-#   [FIX-7] DENSITY_EXPERIMENT_THREADS expanded from (0 12) to (0 4 8 12) to
-#           enable density x thread-count interaction analysis in the report.
+# Fixes applied (v3)
+# -------------------
+#   [FIX-1]  DENSITY_EXPERIMENT_N comment corrected (N=20M never in N_VALUES).
+#   [FIX-3]  sudo_keeper_pid: 'local' separated from $! assignment.
+#   [FIX-4]  EXIT trap moved before optimize_system.
+#   [FIX-5]  mkdir -p guard in print_raw_averages.
+#   [FIX-6]  run_binary regex: (\.[0-9]*)? accepts bare integers.
+#   [FIX-7]  DENSITY_EXPERIMENT_THREADS expanded to (0 4 8 12).
+#   [NEW]    Four-binary support: seq, seq_opt, omp, omp_opt.
 #
 # Usage:
 #   ./tests/benchmarks/bench_traffic.sh [machine_flag]
@@ -78,41 +74,39 @@ BIN_DIR="bin"
 RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic"
 CSV="${RESULTS_DIR}/data.csv"
 
+# Four binaries — built by 'make all'
 BIN_SEQ="${BIN_DIR}/traffic_seq"
+BIN_SEQ_OPT="${BIN_DIR}/traffic_seq_opt"
 BIN_OMP="${BIN_DIR}/traffic_omp"
+BIN_OMP_OPT="${BIN_DIR}/traffic_omp_opt"
 BIN_TESTS="${BIN_DIR}/traffic_tests"
 
-# Thread counts to benchmark. 0 means sequential (traffic_seq binary).
+# Thread counts to benchmark. 0 = sequential binary.
 ALL_THREAD_COUNTS=(0 2 4 6 8 12)
 
 # Number of timed steps per measurement (warmup excluded from the clock).
 MEASURE_STEPS=1000
 
-# N values for the scaling experiment -- one per memory level.
-# Working set = 2 x N x 4 bytes (two int32 buffers):
-#   N =     8 000  ->    64 KB  (L1-bound)
-#   N =    64 000  ->   512 KB  (L2-bound)
-#   N =   500 000  ->     4 MB  (upper L3)
-#   N = 2 000 000  ->    16 MB  (L3/DRAM boundary)
-#   N = 5 000 000  ->    40 MB  (RAM-bound, strong-scaling reference)
-#   N =10 000 000  ->    80 MB  (clearly DRAM-bound)
+# N values for the scaling experiment — one per memory level.
+# Working set = 2 × N × 4 bytes (two int32 buffers):
+#   N =     8 000  →    64 KB  (L1-bound)
+#   N =    64 000  →   512 KB  (L2-bound)
+#   N =   500 000  →     4 MB  (upper L3)
+#   N = 2 000 000  →    16 MB  (L3/DRAM boundary)
+#   N = 5 000 000  →    40 MB  (RAM-bound, strong-scaling reference)
+#   N =10 000 000  →    80 MB  (clearly DRAM-bound)
 N_VALUES=(8000 64000 500000 2000000 5000000 10000000)
 
-# Density fixed for the scaling experiment.
+# Density fixed for the scaling and compiler-opt experiments.
 SCALING_DENSITY="0.50"
 
 # Density experiment parameters.
-# [FIX-1] N=20M (160 MB working set) is intentionally NOT in N_VALUES.
-# It is a dedicated, deeply DRAM-bound point for the density sweep.
-# The deduplication guard (row_already_recorded) prevents re-running rows
-# on --resume but does NOT link rows between scaling and density experiments.
+# [FIX-1] N=20M (160 MB) is intentionally NOT in N_VALUES — dedicated
+# DRAM-bound point for the density sweep. The dedup guard (row_already_recorded)
+# prevents re-running rows on --resume but does NOT link rows between experiments.
 DENSITY_EXPERIMENT_N=20000000
-
-# [FIX-7] Added t=4 and t=8 to enable density x threads interaction analysis.
-# t=0 (seq) and t=12 (max) provide the performance envelope;
-# t=4 and t=8 fill in the scaling curve at intermediate thread counts.
+# [FIX-7] t=4 and t=8 added for density × threads interaction analysis.
 DENSITY_EXPERIMENT_THREADS=(0 4 8 12)
-
 DENSITY_VALUES=(0.10 0.30 0.50 0.70 0.90)
 
 REPETITIONS=10
@@ -128,14 +122,16 @@ CSV_HEADER="impl,threads,road_length,density,repetition,wall_time_ms,avg_velocit
 # ---------------------------------------------------------------------------
 
 binaries_are_built() {
-    [[ -x "${BIN_SEQ}" && -x "${BIN_OMP}" && -x "${BIN_TESTS}" ]]
+    [[ -x "${BIN_SEQ}"     && -x "${BIN_SEQ_OPT}" && \
+       -x "${BIN_OMP}"     && -x "${BIN_OMP_OPT}" && \
+       -x "${BIN_TESTS}" ]]
 }
 
 compile_all_binaries() {
     log_section "Compiling binaries"
     mkdir -p "${BIN_DIR}"
     if make all >/dev/null 2>&1; then
-        log_ok "All binaries compiled."
+        log_ok "All binaries compiled (seq, seq_opt, omp, omp_opt, tests)."
     else
         log_error "Compilation failed. Run 'make all' to see errors."
         exit 1
@@ -171,37 +167,54 @@ row_already_recorded() {
 # Single measurement
 # ---------------------------------------------------------------------------
 
-# Invokes the appropriate binary and echoes "wall_time_ms avg_velocity".
-# The caller is responsible for splitting the two fields.
+# Dispatches to the correct binary based on impl name and thread count.
+# Echoes "wall_time_ms avg_velocity". Caller splits the two fields.
 run_binary() {
-    local road_length="$1" density="$2" threads="$3"
+    local impl="$1" road_length="$2" density="$3" threads="$4"
     local max_warmup exit_code=0 output
     max_warmup=$(warmup_ceiling_for "${road_length}")
 
-    if [[ "${threads}" -eq 0 ]]; then
-        output=$(taskset -c "${BENCH_CPU_SINGLE}" \
-            "${BIN_SEQ}" "${road_length}" "${density}" \
-            "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
-    else
-        output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
-            "${BIN_OMP}" "${road_length}" "${density}" \
-            "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
-            || exit_code=$?
-    fi
+    case "${impl}" in
+        traffic_seq)
+            output=$(taskset -c "${BENCH_CPU_SINGLE}" \
+                "${BIN_SEQ}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_seq_opt)
+            output=$(taskset -c "${BENCH_CPU_SINGLE}" \
+                "${BIN_SEQ_OPT}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_omp)
+            output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
+                "${BIN_OMP}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_omp_opt)
+            output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
+                "${BIN_OMP_OPT}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        *)
+            log_error "Unknown impl: '${impl}'"
+            echo "0.000 0.000000"; return
+            ;;
+    esac
 
     if [[ "${exit_code}" -ne 0 || -z "${output}" ]]; then
-        log_error "Binary failed (N=${road_length} d=${density} t=${threads})"
+        log_error "Binary failed (impl=${impl} N=${road_length} d=${density} t=${threads})"
         echo "0.000 0.000000"; return
     fi
 
-    # Expected format from binary stdout: "229.582 0.412754"
     local ms velocity
     ms=$(      echo "${output}" | awk '{print $1}')
     velocity=$(echo "${output}" | awk '{print $2}')
 
-    # [FIX-6] Use (\.[0-9]*)? instead of (\.[0-9]+)? so that bare integers
-    # ("0", "123") and forms like "0." are accepted without triggering a
-    # spurious log_error when the binary reports a zero-time result.
+    # [FIX-6] (\.[0-9]*)? accepts "0", "0.", "123" as well as "0.000"
     if ! [[ "${ms}"       =~ ^[0-9]+(\.[0-9]*)?$ && \
             "${velocity}" =~ ^[0-9]+(\.[0-9]*)?$ ]]; then
         log_error "Unexpected binary output: '${output}'"
@@ -228,26 +241,41 @@ append_result_row() {
 # Configuration list builders
 # ---------------------------------------------------------------------------
 
+# Scaling experiment: seq + seq_opt at t=0; omp + omp_opt at t>0.
+# Each thread count runs both the unoptimised and optimised binary so that
+# the compiler-opt speedup can be read at every (N, p) combination.
 build_scaling_configurations() {
     local -n out_array="$1"
     out_array=()
     for threads in "${ALL_THREAD_COUNTS[@]}"; do
         for road_length in "${N_VALUES[@]}"; do
-            local impl="traffic_seq"
-            [[ "${threads}" -gt 0 ]] && impl="traffic_omp"
-            out_array+=("${impl}|${threads}|${road_length}|${SCALING_DENSITY}")
+            if [[ "${threads}" -eq 0 ]]; then
+                out_array+=("traffic_seq|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_seq_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+            else
+                out_array+=("traffic_omp|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_omp_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+            fi
         done
     done
 }
 
+# Density experiment: seq + seq_opt at t=0; omp_opt at t>0.
+# Only omp_opt (not omp) is used for the parallel density sweep because the
+# density experiment is primarily about application behaviour vs. density,
+# not about compiler effects; omp_opt gives the most representative
+# parallel performance at each density.
 build_density_configurations() {
     local -n out_array="$1"
     out_array=()
     for threads in "${DENSITY_EXPERIMENT_THREADS[@]}"; do
         for density in "${DENSITY_VALUES[@]}"; do
-            local impl="traffic_seq"
-            [[ "${threads}" -gt 0 ]] && impl="traffic_omp"
-            out_array+=("${impl}|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+            if [[ "${threads}" -eq 0 ]]; then
+                out_array+=("traffic_seq|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+                out_array+=("traffic_seq_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+            else
+                out_array+=("traffic_omp_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+            fi
         done
     done
 }
@@ -262,7 +290,7 @@ run_benchmark() {
     build_density_configurations density_configs
     all_configs=("${scaling_configs[@]}" "${density_configs[@]}")
 
-    log_section "Starting benchmark: ${#all_configs[@]} configurations x ${REPETITIONS} repetitions"
+    log_section "Starting benchmark: ${#all_configs[@]} configurations × ${REPETITIONS} repetitions"
 
     for rep in $(seq 1 "${REPETITIONS}"); do
         log_section "Repetition ${rep} / ${REPETITIONS}"
@@ -276,15 +304,15 @@ run_benchmark() {
 
             if [[ "$(row_already_recorded "${impl}" "${threads}" \
                     "${road_length}" "${density}" "${rep}")" -gt 0 ]]; then
-                log_info "  [SKIP] ${impl}_${threads}t  N=${road_length}  d=${density}  rep=${rep}"
+                log_info "  [SKIP] ${impl} t=${threads} N=${road_length} d=${density} rep=${rep}"
                 continue
             fi
 
-            printf "  rep=%-2s  N=%-10s  d=%-4s  threads=%-3s  " \
-                "${rep}" "${road_length}" "${density}" "${threads}"
+            printf "  rep=%-2s  impl=%-16s  N=%-10s  d=%-4s  t=%-3s  " \
+                "${rep}" "${impl}" "${road_length}" "${density}" "${threads}"
 
             local output ms velocity
-            output=$(run_binary "${road_length}" "${density}" "${threads}")
+            output=$(run_binary "${impl}" "${road_length}" "${density}" "${threads}")
             ms=$(      echo "${output}" | awk '{print $1}')
             velocity=$(echo "${output}" | awk '{print $2}')
 
@@ -301,7 +329,7 @@ run_benchmark() {
 # ---------------------------------------------------------------------------
 
 print_raw_averages() {
-    # [FIX-5] Ensure RESULTS_DIR exists when this function is called standalone.
+    # [FIX-5] Guard against RESULTS_DIR not existing when called standalone.
     mkdir -p "${RESULTS_DIR}"
     local summary="${RESULTS_DIR}/summary_raw.txt"
 
@@ -310,7 +338,7 @@ print_raw_averages() {
         NR==1 { next }
         $6+0 > 0 {
             key = $1 SUBSEP $2 SUBSEP $3 SUBSEP $4
-            sum_ms[key]  += $6; sum_v[key] += $7; cnt[key]++
+            sum_ms[key] += $6; sum_v[key] += $7; cnt[key]++
         }
         END {
             for (k in sum_ms) {
@@ -319,15 +347,15 @@ print_raw_averages() {
                     a[1], a[2], a[3], a[4],
                     sum_ms[k]/cnt[k], sum_v[k]/cnt[k]
             }
-        }' "${CSV}" | sort -t'|' -k3,3n -k4,4g -k2,2n \
+        }' "${CSV}" | sort -t'|' -k3,3n -k4,4g -k1,1 -k2,2n \
         | awk -F'|' 'BEGIN {
-            printf "%-16s  %-7s  %-12s  %-7s  %9s  %9s\n",
+            printf "%-20s  %-7s  %-12s  %-7s  %9s  %9s\n",
                 "impl","threads","road_length","density","avg_ms","avg_vel"
-            printf "%-16s  %-7s  %-12s  %-7s  %9s  %9s\n",
-                "----------------","-------","------------","-------",
+            printf "%-20s  %-7s  %-12s  %-7s  %9s  %9s\n",
+                "--------------------","-------","------------","-------",
                 "---------","---------"
         }
-        { printf "%-16s  %-7s  %-12s  %-7s  %9.1f  %9.4f\n",
+        { printf "%-20s  %-7s  %-12s  %-7s  %9.1f  %9.4f\n",
             $1,$2,$3,$4,$5,$6 }'
     } | tee "${summary}"
 
@@ -343,20 +371,21 @@ print_raw_averages() {
 print_banner() {
     echo -e "${BOLD}"
     echo "================================================================"
-    echo "   Traffic Automaton — OpenMP Benchmark"
-    echo "   Machine         : ${MACHINE_FLAG}"
-    echo "   Host            : $(cat /etc/hostname 2>/dev/null \
-                                   || cat /proc/sys/kernel/hostname 2>/dev/null \
-                                   || echo 'unknown')"
-    echo "   N values        : ${N_VALUES[*]}"
-    echo "   Thread counts   : ${ALL_THREAD_COUNTS[*]}"
-    echo "   Measure steps   : ${MEASURE_STEPS}"
-    echo "   Repetitions     : ${REPETITIONS}"
-    echo "   Bench CPUs      : ${BENCH_CPUS}"
-    echo "   Density exp N   : ${DENSITY_EXPERIMENT_N}"
-    echo "   Density threads : ${DENSITY_EXPERIMENT_THREADS[*]}"
-    echo "   Loop order      : repetition (outer) -> config (inner)"
-    echo "   Date            : $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "   Traffic Automaton — OpenMP + Compiler-Opt Benchmark"
+    echo "   Machine          : ${MACHINE_FLAG}"
+    echo "   Host             : $(cat /etc/hostname 2>/dev/null \
+                                    || cat /proc/sys/kernel/hostname 2>/dev/null \
+                                    || echo 'unknown')"
+    echo "   N values         : ${N_VALUES[*]}"
+    echo "   Thread counts    : ${ALL_THREAD_COUNTS[*]}"
+    echo "   Measure steps    : ${MEASURE_STEPS}"
+    echo "   Repetitions      : ${REPETITIONS}"
+    echo "   Bench CPUs       : ${BENCH_CPUS}"
+    echo "   Density exp N    : ${DENSITY_EXPERIMENT_N}"
+    echo "   Density threads  : ${DENSITY_EXPERIMENT_THREADS[*]}"
+    echo "   Binaries         : seq  seq_opt  omp  omp_opt"
+    echo "   Loop order       : repetition (outer) -> config (inner)"
+    echo "   Date             : $(date '+%Y-%m-%d %H:%M:%S')"
     echo "================================================================"
     echo -e "${RESET}"
 }
@@ -408,17 +437,14 @@ main() {
 
     sudo -v
 
-    # [FIX-3] Declare local variable BEFORE the background fork so that $!
-    # is captured into a properly initialized local variable in all bash
-    # versions. Combined 'local var=$!' is fragile because 'local' is a
-    # command that resets $? and can behave inconsistently with $!.
+    # [FIX-3] Declare local BEFORE the background fork so $! is captured
+    # correctly in all bash versions.
     local sudo_keeper_pid
     ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
     sudo_keeper_pid=$!
 
-    # [FIX-4] Set the EXIT trap HERE, immediately after capturing the PID
-    # and BEFORE optimize_system. This guarantees restore_system is called
-    # even if optimize_system fails or the script is interrupted mid-setup.
+    # [FIX-4] Set the EXIT trap HERE, before optimize_system, so that
+    # restore_system runs even if optimize_system fails mid-setup.
     trap 'kill "${sudo_keeper_pid}" 2>/dev/null; restore_system' EXIT
 
     optimize_system
