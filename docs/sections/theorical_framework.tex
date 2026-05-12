@@ -1,0 +1,251 @@
+\section{Marco Teórico}
+
+\subsection{Computación de Alto Rendimiento (HPC)}
+La Computación de Alto Rendimiento (HPC, por sus siglas en inglés) consiste en la agregación de potencia de cálculo a través de arquitecturas paralelas para resolver problemas científicos y tecnológicos de extrema complejidad. Esta disciplina permite ejecutar algoritmos y modelados matemáticos que resultarían inabarcables para un sistema tradicional debido a restricciones de tiempo y recursos de hardware \parencite{Hager2010HPC}. Al dividir cargas masivas de trabajo en instrucciones más pequeñas que se procesan simultáneamente, HPC maximiza la velocidad de procesamiento de datos y la obtención de resultados en la ingeniería \parencite{Patterson2017Computer}.
+
+\subsection{Programación Secuencial y Concurrente}
+La programación secuencial es el paradigma clásico de desarrollo donde las instrucciones de un algoritmo se ejecutan de forma estrictamente lineal, una tras otra, sobre un único núcleo de procesamiento. En este modelo tradicional, el límite de rendimiento está directamente dictado por la frecuencia de reloj del hardware. Como respuesta a estas limitaciones físicas, la programación concurrente estructura el software en múltiples hilos o tareas independientes que hacen progreso de forma superpuesta en el tiempo. Cuando estas tareas operan de manera simultánea en una arquitectura de hardware multinúcleo, la concurrencia se traduce en paralelismo físico, lo cual permite dividir la carga de trabajo y reducir drásticamente el tiempo de ejecución en problemas de cómputo intensivo \parencite{BenAri2006Concurrent}.
+
+\subsection{Sistemas de Memoria Compartida}
+En el ámbito de la computación paralela, el modelo de memoria compartida establece que múltiples hilos de ejecución (como los creados por la librería Pthreads) operan dentro de un mismo espacio de direccionamiento lógico. A nivel de arquitectura, esto significa que todos los núcleos del procesador pueden acceder de forma directa y simultánea a las mismas estructuras de datos residentes en la memoria principal. Para problemas matriciales, este modelo resulta excepcionalmente eficiente frente a los sistemas de memoria distribuida, ya que evita la necesidad de copiar y transmitir los datos de las matrices de origen repetidamente entre procesos. Aunque este paradigma exige control riguroso para evitar condiciones de carrera, en operaciones intrínsecamente independientes como el cálculo individual de las celdas de una matriz resultado, su implementación maximiza la eficiencia computacional sin sobrecarga de sincronización \parencite{Silberschatz2018Operating}.
+
+\subsection{Jerarquía de Caché, Líneas de Caché y Localidad de Memoria}
+El rendimiento de una aplicación de alto rendimiento (HPC) no depende exclusivamente de la capacidad matemática del procesador, sino también del acceso al subsistema de memoria. Para mitigar la alta latencia térmica y física de la memoria RAM, los procesadores modernos integran una jerarquía de memoria ultrarrápida cercana a los núcleos, conocida como memoria Caché, habitualmente dividida en niveles (L1, L2 y L3). La unidad mínima de transferencia de información entre la RAM principal y la memoria caché no es un byte aislado, sino un bloque continuo de datos denominado línea de caché (\textit{cache line}), que en las arquitecturas modernas suele constar de 64 bytes \parencite{Drepper2007Memory}.
+
+Esta transferencia por bloques está fundamentada en el principio de localidad espacial de memoria, un concepto empírico que dicta que si un programa accede a una dirección de memoria, es inminentemente probable que acceda a las direcciones adyacentes a continuación. En lenguajes de programación como C, las matrices bidimensionales se almacenan en la memoria RAM de manera contigua organizadas por filas (\textit{row-major order}). Durante la multiplicación matricial clásica iterativa, la segunda matriz se recorre inevitablemente por columnas; este patrón de acceso ortogonal rompe por completo la localidad espacial. Al intentar leer datos saltando grandes bloques de memoria, los valores necesarios no se encuentran en la línea de caché cargada, provocando fallos de caché (\textit{cache misses}) que obligan al procesador a detenerse (\textit{stall}) mientras busca los datos nuevamente en la lenta memoria RAM, lo cual penaliza severamente el desempeño del algoritmo \parencite{Patterson2017Computer}.
+
+\subsection{Métricas de Rendimiento en Computación Secuencial}
+El análisis de un algoritmo secuencial requiere establecer una línea base absoluta sobre la cual evaluar cualquier mejora algorítmica o de hardware. La métrica fundamental empírica es el Tiempo de Ejecución (\textit{Wall-clock time}), que representa el tiempo físico real transcurrido desde el inicio hasta la finalización del programa. Sin embargo, dado que este valor fluctúa dependiendo de la interferencia del sistema operativo y los accesos a memoria, la arquitectura de computadores recurre a métricas de rendimiento intrínseco (\textit{throughput}) \parencite{Patterson2017Computer}.
+
+Para cargas de trabajo de alto rendimiento algebraico como la multiplicación de matrices, la métrica estandarizada predominante es el volumen de Operaciones de Punto Flotante por Segundo (FLOPS, por sus siglas en inglés). Esta medida cuantifica el rendimiento matemático bruto del procesador y se define mediante la siguiente relación:
+
+\begin{equation}
+    \text{FLOPS} = \frac{\text{Operaciones Aritméticas Totales}}{T_{\text{ejecución}}}
+\end{equation}
+
+Para el algoritmo clásico iterativo que multiplica dos matrices cuadradas de dimensión \(n \times n\), el número total de operaciones de punto flotante se establece analíticamente en \(2n^3\) (contabilizando una instrucción de multiplicación y una de suma por cada iteración del bucle más interno). Al contrastar los FLOPS experimentales obtenidos en la ejecución secuencial contra el rendimiento teórico máximo (\textit{Peak FLOPS}) que el fabricante del procesador garantiza para un solo núcleo, es posible diagnosticar ineficiencias de memoria o cuellos de botella antes de recurrir a la paralelización \parencite{Hager2010HPC}. 
+
+Adicionalmente, el rendimiento de la ejecución en un único núcleo se evalúa a nivel microarquitectónico mediante el IPC (Instrucciones por Ciclo de reloj). Esta métrica indica la eficiencia con la que el código compilado logra mantener ocupada la segmentación (\textit{pipeline}) del procesador, minimizando las detenciones o burbujas producidas por dependencias de datos en la ejecución lineal \parencite{Yi2020CPI}.
+
+
+\subsection{Métricas de Rendimiento en Computación Paralela}
+Para cuantificar el éxito de una implementación paralela y su eficiencia frente a la ejecución secuencial, la literatura científica emplea métricas matemáticas estandarizadas. La métrica fundamental es el \textit{Speedup} o Aceleración (\(S_p\)), la cual mide la ganancia de velocidad relativa. Se define formalmente como:
+
+\begin{equation}
+    S_p = \frac{T_1}{T_p}
+\end{equation}
+
+donde \(T_1\) representa el tiempo de ejecución del algoritmo secuencial óptimo sobre un único núcleo, y \(T_p\) es el tiempo de ejecución del algoritmo paralelo empleando \(p\) unidades de procesamiento (hilos o procesos). Derivada de esta métrica se encuentra la Eficiencia (\(E_p\)), que evalúa el grado de aprovechamiento de los recursos físicos, indicando qué fracción del tiempo los procesadores realizan trabajo útil sin quedar ociosos:
+
+\begin{equation}
+    E_p = \frac{S_p}{p} = \frac{T_1}{p \cdot T_p}
+\end{equation}
+
+El desempeño asintótico de estos sistemas está regido por dos leyes analíticas que abordan la escalabilidad desde diferentes perspectivas teóricas. La \textbf{Ley de Amdahl} evalúa la \textit{escalabilidad fuerte}, demostrando que el \textit{Speedup} máximo de un sistema está estrictamente limitado por la fracción de código que no se puede paralelizar. Asumiendo un tamaño de problema fijo, la ley se expresa como:
+
+\begin{equation}
+    S_{\text{Amdahl}} \leq \frac{1}{(1 - f) + \frac{f}{p}}
+\end{equation}
+
+donde \(f\) es la fracción del programa que es paralelizable y \((1 - f)\) es la porción estrictamente secuencial (como la inicialización de memoria mediante \texttt{malloc} o la lectura/escritura en disco). Según este postulado matemático, incluso si el número de procesadores \(p\) tiende a infinito, la aceleración máxima nunca superará \(1 / (1 - f)\). Esto explica el rendimiento decreciente observado cuando el uso de múltiples hilos lógicos en un procesador alcanza su límite físico y no aporta mejoras significativas \parencite{Patterson2017Computer}.
+
+En contraste, la \textbf{Ley de Gustafson-Barsis} describe la \textit{escalabilidad débil}. Esta ley argumenta que, en la práctica profesional, los ingenieros no buscan resolver un problema fijo más rápido, sino que utilizan el mayor poder de cómputo para resolver problemas de un tamaño sustancialmente mayor en el mismo marco de tiempo \parencite{Gustafson1988Reevaluating}. Su modelo se define como:
+
+\begin{equation}
+    S_{\text{Gustafson}} = (1 - f) + p \cdot f
+\end{equation}
+
+Bajo la visión de Gustafson, a medida que la dimensión de las matrices crece de forma masiva, la cantidad de operaciones paralelas \(f\) (multiplicaciones flotantes) aumenta drásticamente, haciendo que la fracción secuencial inicial \((1 - f)\) pierda peso relativo. Esto mitiga el cuello de botella pronosticado por Amdahl, permitiendo alcanzar un \textit{Speedup} escalable y un uso altamente eficiente de los recursos al ajustar la carga de trabajo proporcionalmente al hardware.
+
+\subsection{OpenMP como Modelo de Programación Paralela}
+OpenMP (\textit{Open Multi-Processing}) es una interfaz de programación de aplicaciones
+(API) de estándar abierto para la programación paralela en sistemas de memoria compartida,
+desarrollada y mantenida por el consorcio OpenMP Architecture Review Board. El estándar
+define un conjunto de directivas de compilador, rutinas de biblioteca en tiempo de ejecución y
+variables de entorno que permiten al programador expresar paralelismo a nivel de bucles y
+tareas directamente sobre un código fuente C, C++ o Fortran existente, sin necesidad de
+reescribir la arquitectura del programa \parencite{Dagum1998OpenMP}. Esta característica lo
+convierte en el modelo predominante para la paralelización incremental en HPC sobre
+arquitecturas multinúcleo de memoria compartida.
+
+El modelo de ejecución de OpenMP se fundamenta en el paradigma de bifurcación y unión
+(\textit{fork-join}). El programa inicia su ejecución como un hilo único denominado hilo maestro,
+el cual ejecuta el código secuencial de forma ordinaria. Al encontrar una directiva de región
+paralela, el hilo maestro bifurca un equipo de hilos de trabajo que ejecutan el bloque de código
+encerrado de forma concurrente; al concluir dicha región, todos los hilos se sincronizan en una
+barrera implícita y se unen de nuevo al hilo maestro, que retoma la ejecución secuencial
+\parencite{Dagum1998OpenMP}. Este ciclo puede repetirse tantas veces como regiones paralelas
+declare el programa, lo que permite una adopción gradual y controlada del paralelismo sobre
+una base de código secuencial ya validada.
+
+La directiva central para la paralelización de bucles es \texttt{\#pragma omp parallel for},
+que distribuye automáticamente las iteraciones del bucle entre los hilos del equipo. El
+programador puede controlar la política de distribución de trabajo mediante la cláusula
+\texttt{schedule}, que admite los modos estático (\textit{static}), dinámico (\textit{dynamic})
+y guiado (\textit{guided}), cada uno con implicaciones distintas sobre el balance de carga y la
+sobrecarga de coordinación entre hilos \parencite{Chapman2008OpenMP}. Para la
+multiplicación de matrices, el modo estático resulta óptimo dado que las iteraciones presentan
+una carga de trabajo homogénea; esto permite al compilador asignar bloques contiguos de
+filas a cada hilo sin incurrir en la sobrecarga de planificación dinámica en tiempo de ejecución.
+
+El modelo de datos de OpenMP clasifica las variables del programa en dos categorías: compartidas
+(\textit{shared}), accesibles y modificables por todos los hilos del equipo simultáneamente, y
+privadas (\textit{private}), de las cuales cada hilo posee una copia independiente. El control
+explícito sobre este ámbito de visibilidad es un requisito de corrección del programa paralelo:
+las matrices de entrada y la matriz resultado deben declararse como compartidas para que todos
+los hilos lean y escriban sobre la misma estructura de datos, mientras que las variables de
+índice de los bucles internos deben ser privadas para evitar condiciones de carrera
+\parencite{Chapman2008OpenMP}. Dado que cada celda \(C_{ij}\) de la matriz resultado es
+calculada de forma completamente independiente por un único hilo, la multiplicación de
+matrices no requiere mecanismos de sincronización explícita como secciones críticas o
+operaciones atómicas, lo que elimina la principal fuente de sobrecarga en implementaciones
+OpenMP y permite un escalado cercano al teórico.
+
+\subsection{Autómatas Celulares}
+
+Un autómata celular (AC) es un sistema dinámico discreto distribuido
+espacialmente en el que tanto el tiempo como el espacio se representan
+de forma discreta \parencite{Wolfram1984}. Formalmente, un AC
+unidimensional se define como la tupla $\mathcal{A} = (\mathbb{Z},\, Q,\,
+\mathcal{N},\, f)$, donde $\mathbb{Z}$ es el espacio de celdas indexadas
+por los enteros, $Q$ es un conjunto finito de estados posibles,
+$\mathcal{N} = \{-r, \ldots, 0, \ldots, r\}$ es la vecindad de radio $r$,
+y $f : Q^{2r+1} \to Q$ es la función de transición local. En cada paso
+de tiempo, esta función se aplica de manera sincrónica e idéntica a todas
+las celdas:
+\[
+  R^{t+1}(i) = f\!\left(R^t(i-r),\, \ldots,\, R^t(i),\, \ldots,\,
+  R^t(i+r)\right).
+\]
+
+La propiedad que habilita directamente el cómputo paralelo es esta
+actualización sincrónica: el estado nuevo de la celda $i$ depende
+exclusivamente del estado de su vecindad en el instante $t$, sin que
+intervengan cambios ocurridos durante el mismo paso. En consecuencia,
+todas las celdas son computacionalmente independientes entre sí dentro
+de un mismo paso de tiempo, lo que hace del modelo de AC una estructura
+naturalmente paralelizable sin condiciones de carrera entre hilos.
+
+Wolfram clasificó los AC elementales unidimensionales, aquellos con
+$|Q| = 2$ y $r = 1$, que generan 256 reglas distintas, en cuatro clases
+de comportamiento asintótico \parencite{Wolfram1984}. La clase I agrupa
+autómatas que convergen a un estado homogéneo uniforme independientemente
+de las condiciones iniciales, análogo a un punto límite en sistemas
+continuos. La clase II produce estructuras periódicas o estacionarias,
+análoga a ciclos límite. La clase III exhibe comportamiento caótico
+semejante al de atractores extraños. La clase IV genera patrones complejos
+localizados con interacciones no triviales, y se ha conjeturado que es
+capaz de computación universal, por lo que propiedades de su comportamiento
+a tiempo infinito son indecidibles.
+
+\subsection{Modelo de Nagel-Schreckenberg}
+
+El modelo de Nagel y Schreckenberg (NaSch), publicado en 1992, fue el
+primer autómata celular diseñado explícitamente para simular el flujo
+vehicular en una vía de un solo carril \parencite{NagelSchreckenberg1992}.
+El modelo opera sobre un arreglo unidimensional de $L$ celdas con
+condiciones de frontera periódicas, donde cada celda puede estar vacía
+u ocupada por un vehículo con velocidad entera $v \in \{0, 1,
+\ldots, v_{\max}\}$. La dinámica de cada paso de tiempo $t \to t+1$ se
+define mediante cuatro reglas aplicadas en paralelo a todos los vehículos
+simultáneamente:
+
+\begin{enumerate}
+  \item Aceleración: $v_n \leftarrow \min(v_n + 1,\, v_{\max})$.
+  \item Frenado por interacción: $v_n \leftarrow \min(v_n,\, d_n - 1)$,
+        donde $d_n$ es el número de celdas vacías frente al vehículo $n$.
+  \item Aleatorización: con probabilidad $p$, si $v_n > 0$, entonces
+        $v_n \leftarrow v_n - 1$.
+  \item Movimiento: el vehículo $n$ avanza $v_n$ celdas.
+\end{enumerate}
+
+El parámetro $p \in [0,1]$ modela la conducta imperfecta del conductor
+humano y fue la primera formalización del origen estocástico de los
+atascos espontáneos sin causa aparente en la vía.
+
+La implementación desarrollada en este trabajo corresponde al caso límite
+determinista con $v_{\max} = 1$ y $p = 0$. Bajo estas condiciones, la
+regla de aceleración es trivial dado que todo vehículo alcanza $v = 1$
+en el mismo paso, y la aleatorización desaparece, reduciéndose la
+dinámica a una sola condición binaria: un vehículo avanza si y solo si
+la celda inmediatamente frente a él estaba vacía en el instante $t$. Este
+caso particular es algebraicamente equivalente a la Regla 184 de los AC
+elementales y constituye el caso base analíticamente tratable del modelo
+NaSch, estudiado explícitamente por los autores originales
+\parencite{NagelSchreckenberg1992}. La simplificación es justificada
+porque preserva el comportamiento colectivo esencial del modelo, la
+transición entre flujo libre y congestionado, mientras elimina los
+grados de libertad que no son relevantes para el análisis de rendimiento
+paralelo que motiva este trabajo.
+
+\subsection{Transición de Fase Libre-Congestionado}
+
+El experimento de barrido de densidades tiene por objetivo observar el
+cambio cualitativo de comportamiento del sistema en función de la
+densidad vehicular $\rho = N_{\mathrm{cars}} / N$. Para densidades bajas,
+la mayoría de los vehículos encuentra espacio libre y la velocidad media
+tiende a $\bar{v} \approx 1$, correspondiente al régimen de flujo libre.
+Para densidades altas, los vehículos se bloquean mutuamente y $\bar{v}
+\to 0$, lo que define el régimen congestionado. Esta transición entre
+fases de comportamiento cualitativamente distinto fue uno de los
+resultados centrales reportados por Nagel y Schreckenberg
+\parencite{NagelSchreckenberg1992}, quienes la denominaron transición de
+flujo laminar a ondas de arranque-parada.
+
+En el caso determinista con $v_{\max} = 1$ y $p = 0$, la transición es
+abrupta y ocurre exactamente en $\rho = 0.5$. Para $\rho \leq 0.5$,
+todos los vehículos pueden moverse en cada paso y $\bar{v} = 1$; para
+$\rho > 0.5$, el flujo queda limitado por la densidad de espacios vacíos
+y $\bar{v} = (1 - \rho) / \rho$. La representación canónica de este
+fenómeno es el diagrama fundamental, que grafica el flujo vehicular
+$q = \rho \cdot \bar{v}$ en función de $\rho$. Para el modelo
+implementado, el diagrama fundamental adopta una forma triangular
+simétrica, conocida en la literatura como función tent, con un máximo
+de $q_{\max} = 0.5$ en $\rho = 0.5$. Este diagrama es la referencia
+estándar para validar modelos de tráfico en la literatura, y justifica
+tanto el rango de densidades elegido en el experimento como el registro
+de la velocidad media $\bar{v}$ como variable de salida principal del
+simulador.
+
+\subsection{Intensidad Aritmética y Modelo Roofline}
+
+El modelo Roofline, propuesto por Williams, Waterman y Patterson
+\parencite{Williams2009}, es un modelo de rendimiento visual que
+relaciona el desempeño alcanzable de un kernel de cómputo con dos
+parámetros del hardware: el rendimiento de cómputo pico $\pi$ (en
+operaciones por segundo) y el ancho de banda de memoria pico $\beta$
+(en bytes por segundo). La variable que caracteriza al kernel es la
+intensidad aritmética:
+\[
+  I = \frac{\text{operaciones ejecutadas}}{\text{bytes transferidos
+  desde/hacia memoria principal}}.
+\]
+El desempeño alcanzable queda acotado superiormente por:
+\[
+  P \;\leq\; \min\!\left(\pi,\; \beta \cdot I\right).
+\]
+Un kernel es memory-bound si $I < \pi / \beta$, en cuyo caso el cuello
+de botella es el ancho de banda de memoria y no la capacidad de cómputo;
+es compute-bound si $I > \pi / \beta$. El punto de cresta (ridge point)
+en la coordenada $I = \pi / \beta$ marca la frontera entre ambos
+regímenes.
+
+Para el autómata celular de tráfico implementado, cada celda requiere
+tres lecturas ($R^t(i-1)$, $R^t(i)$, $R^t(i+1)$) y una escritura
+($R^{t+1}(i)$), junto con aproximadamente dos operaciones lógicas para
+evaluar la regla de transición. Representando cada celda como un entero
+de un byte, la transferencia de memoria por celda es de 4 bytes y el
+número de operaciones es de alrededor de 2, lo que produce una intensidad
+aritmética $I \approx 0.4$ op/byte. Este valor se sitúa por debajo del
+punto de cresta de cualquier arquitectura multicore contemporánea,
+clasificando el kernel del autómata como claramente memory-bandwidth bound
+\parencite{Williams2009}.
+
+Esta caracterización tiene una implicación directa para la escalabilidad
+paralela de la implementación: al incrementar el número de hilos, la
+demanda agregada de ancho de banda de la memoria compartida se satura
+antes de que la capacidad de cómputo adicional pueda aprovecharse. En
+consecuencia, el speedup esperado con $p$ hilos alcanzará una saturación
+anticipada determinada no por el overhead de sincronización ni por la
+fracción serial del programa (Ley de Amdahl), sino por el límite físico
+del ancho de banda de memoria de la arquitectura subyacente.

@@ -88,7 +88,7 @@ El estado inicial de cells se genera con rand en road\_create, sembrando el gene
 
 \subsection{Implementación secuencial}
 
-El binario traffic\_seq se compila sin el flag -fopenmp. Las directivas \#pragma omp presentes en simulation.c son ignoradas silenciosamente por el compilador conforme a lo establecido en ISO/IEC 9899:2011, sección~6.10.6, que autoriza al preprocesador a descartar cualquier pragma no reconocido. Como consecuencia, el binario no enlaza libgomp, no crea ningún equipo de hilos en tiempo de ejecución y el bucle de actualización se ejecuta como un bucle for ordinario. Esta propiedad puede verificarse inspeccionando las dependencias del binario con ldd bin/traffic\_seq, que no lista libgomp.so.
+El binario traffic\_seq se compila sin el flag -fopenmp. Las directivas \#pragma omp presentes en simulation.c son ignoradas por el compilador conforme a lo establecido en ISO/IEC 9899:2011, sección~6.10.6, que autoriza al preprocesador a descartar cualquier pragma no reconocido. Como consecuencia, el binario no enlaza libgomp, no crea ningún equipo de hilos en tiempo de ejecución y el bucle de actualización se ejecuta como un bucle for ordinario. Esta propiedad puede verificarse inspeccionando las dependencias del binario con ldd bin/traffic\_seq, que no lista libgomp.so.
 
 La medición de tiempo utiliza clock\_gettime(CLOCK\_MONOTONIC) de time.h, accesible bajo \_POSIX\_C\_SOURCE=200809L con -std=c11. Esta macro de prueba de características se define en CFLAGS del Makefile en lugar de en los encabezados, siguiendo la práctica estándar de que las macros de prueba pertenecen al entorno de compilación y no al código fuente. El reloj CLOCK\_MONOTONIC es inmune a ajustes del reloj del sistema (NTP, adjtime) y garantiza mediciones de tiempo transcurrido fiables. El cronómetro se activa inmediatamente antes de la fase de medición y se detiene al finalizar, excluyendo el calentamiento del tiempo reportado.
 
@@ -118,10 +118,12 @@ Dentro de simulation.c existen dos regiones paralelas independientes por paso de
 
 La primera, en compute\_next\_generation, aplica la regla~\eqref{eq:regla} a cada celda:
 
-\begin{verbatim}
-#pragma omp parallel for schedule(static)
-for (int i = 0; i < length; i++) { ... }
-\end{verbatim}
+\begin{center}
+    \begin{verbatim}
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < length; i++) { ... }
+    \end{verbatim}
+\end{center}
 
 La cláusula schedule(static) asigna bloques contiguos de celdas a cada hilo con partición determinista en tiempo de compilación. Esta elección es apropiada porque el trabajo por celda es uniforme: la regla~\eqref{eq:regla} implica exactamente tres lecturas, dos operaciones lógicas y una escritura para cada posición, independientemente del estado de la celda. Con trabajo uniforme, schedule(static) tiene menor overhead de planificación que dynamic o guided, y produce un patrón de acceso a memoria favorable para el prefetcher al asignar rangos contiguos a cada hilo.
 
@@ -129,21 +131,23 @@ La independencia de las iteraciones es estructural: todas las lecturas provienen
 
 La segunda región paralela, en count\_departed\_cars, cuenta los carros que se desplazaron para calcular $v(t)$:
 
-\begin{verbatim}
-#pragma omp parallel for reduction(+:departed) schedule(static)
-for (int i = 0; i < length; i++)
-    departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
-\end{verbatim}
+\begin{center}
+    \begin{verbatim}
+        #pragma omp parallel for reduction(+:departed) schedule(static)
+        for (int i = 0; i < length; i++)
+            departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+    \end{verbatim}
+\end{center}
 
 La cláusula reduction(+:departed) instruye a OpenMP a mantener una copia privada del acumulador en cada hilo y combinarlas con suma al finalizar la región paralela. Sin esta cláusula, los incrementos concurrentes sobre una variable compartida constituirían una condición de carrera que produciría conteos incorrectos.
 
 Entre las dos regiones paralelas no se requiere sincronización explícita porque la segunda lee old\_cells y new\_cells, que son los mismos arreglos que la primera escribió en next[] y leyó de current[]. La barrera implícita al final de la primera directiva parallel for garantiza que todos los hilos han completado sus escrituras en next\_cells antes de que cualquier hilo comience count\_departed\_cars.
 
-La fase de calentamiento no se paralleliza de forma especial: simulation\_warmup\_until\_steady\_state llama iterativamente a simulation\_step, que ya contiene las dos regiones paralelas. El criterio de convergencia~\eqref{eq:criterio} se evalúa en el hilo maestro fuera de las regiones paralelas, lo que es correcto porque accede únicamente a acumuladores escalares locales a la función.
+La fase de calentamiento no se paralleliza de forma especial: \\ simulation\_warmup\_until\_steady\_state llama iterativamente a simulation\_step, que ya contiene las dos regiones paralelas. El criterio de convergencia~\eqref{eq:criterio} se evalúa en el hilo maestro fuera de las regiones paralelas, lo que es correcto porque accede únicamente a acumuladores escalares locales a la función.
 
 \subsection{Métricas de rendimiento}
 
-El script de benchmark registra el tiempo de pared $T(p)$ de la fase de medición para cada configuración $(N, \rho, p)$. A partir del CSV generado, las métricas de escalado fuerte se calculan como:
+El script de benchmark registra el wall time $T(p)$ de la fase de medición para cada configuración $(N, \rho, p)$. A partir del CSV generado, las métricas de escalado fuerte se calculan como:
 
 \begin{equation}
     S(p) = \frac{T_{\text{seq}}}{T_{\text{omp}}(p)},
@@ -187,27 +191,6 @@ El working set es $2 \times N \times 4$ bytes, correspondiente a los dos buffers
 El experimento de densidad fija $N = 2\,000\,000$ y mide los hilos $\{0, 12\}$ sobre los cinco valores de densidad $\{0.10,\, 0.30,\, 0.50,\, 0.70,\, 0.90\}$. Las filas que coinciden con configuraciones ya medidas en el experimento de escalado (concretamente $\rho = 0.50$ con $p \in \{0, 12\}$) no generan mediciones duplicadas gracias al mecanismo de reanudación descrito más adelante.
 
 El número total de configuraciones únicas es 44 y cada una se repite 10 veces, produciendo 440 filas en el CSV.
-
-\subsection{Orden de iteración y validez de las mediciones}
-
-La decisión más importante del diseño del bucle de medición es el orden de los índices: las repeticiones constituyen el bucle externo y las configuraciones el interno. En cada ronda de repetición se ejecutan todas las configuraciones exactamente una vez antes de comenzar la siguiente ronda.
-
-La alternativa intuitiva — repeticiones en el bucle interno — produciría mediciones inválidas para valores de $N$ pequeños. Un arreglo de $N = 8\,000$ enteros ocupa 64 KB, que cabe completamente en la caché L1 de un núcleo. Con el bucle equivocado, la repetición 2 del mismo $N$ encontraría el working set ya residente en L1 desde la repetición 1, midiendo efectivamente rendimiento de caché caliente en lugar del rendimiento real del algoritmo. La distorsión puede alcanzar el 30--50\% en tiempo de ejecución para los valores de $N$ menores.
-
-Con el orden correcto, entre dos mediciones consecutivas de $N = 8\,000$ intervienen configuraciones con $N = 10\,000\,000$ cuyo working set de 80 MB vacía completamente la caché LLC, garantizando condiciones de caché fría en cada medición.
-
-\subsection{Acondicionamiento del sistema}
-
-Antes de comenzar el bucle de medición, el harness aplica cuatro modificaciones al sistema operativo para reducir la varianza de los tiempos:
-
-\begin{enumerate}
-    \item El gobernador de frecuencia de CPU se fija en performance mediante escritura en /sys/devices/system/cpu/cpufreq/policy*/scaling\_governor, deshabilitando DVFS. Sin esto, el procesador puede operar a frecuencias inferiores a la nominal durante el primer paso de cada configuración mientras el gobernador reacciona a la carga.
-    \item La aleatorización del espacio de direcciones se deshabilita fijando /proc/sys/kernel/randomize\_va\_space a 0. Esto garantiza que los arreglos cells y next\_cells caigan en las mismas páginas físicas entre repeticiones, eliminando variabilidad en el comportamiento del TLB.
-    \item Las mediciones paralelas se ejecutan con prioridad de tiempo real FIFO mediante sudo chrt -f 99, lo que evita que el planificador de Linux desaloje los hilos de OpenMP durante una medición.
-    \item Los binarios se fijan a núcleos específicos con taskset. El binario secuencial se ancla a un único núcleo para eliminar migraciones del planificador; el binario OpenMP recibe acceso a todos los núcleos del conjunto de benchmark. Los valores originales del gobernador y del flag de ASLR se restauran automáticamente al terminar mediante un trap sobre la señal EXIT.
-\end{enumerate}
-
-El harness solicita credenciales sudo antes de comenzar y las renueva cada 55 segundos mediante un proceso de fondo, evitando que la expiración del ticket interrumpa una medición en curso durante un benchmark que puede durar varias horas.
 
 \subsection{Techo de calentamiento adaptativo}
 
