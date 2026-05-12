@@ -3,33 +3,31 @@
 # bench_profiling.sh  --  CPU and memory profiling of the sequential
 #                         traffic automaton implementation.
 #
+# Fixes applied (v2):
+#   [FIX-1] parse_peak_mb: reads $3 (total_B) instead of $4 (useful_B).
+#            Also returns "" instead of "0.000" when the file is empty
+#            (i.e. Massif was skipped for N > VALGRIND_MAX_N), so the CSV
+#            cell is empty rather than a misleading zero.
+#   [FIX-2] run_massif / run_cachegrind: when N > VALGRIND_MAX_N the
+#            sentinel file is now written as "SKIPPED" (non-empty) so that
+#            the -s test in parse_peak_mb correctly identifies it as skipped
+#            rather than "empty = not-yet-run".
+#   [FIX-3] perf_extract: regex is now anchored at the word boundary after
+#            the metric name to prevent "instructions" from matching
+#            "branch-instructions" (or similar prefix collisions).
+#   [FIX-4] PERF_STAT_REPEATS raised from 1 to 5 to average hardware
+#            counters across multiple runs and reduce PMU noise.
+#
 # Tools used:
-#   gprof         : time per function ( -fno-inline -pg to prevent
-#                   inlining from silencing hot functions)
+#   gprof         : time per function ( -fno-inline -pg )
 #   perf stat     : hardware counters (L1, LLC, TLB, branch) repeated
 #                   PERF_STAT_REPEATS times (-r)
 #   perf record   : sampling-based hot-spot profiling with call-graph (-g)
 #   valgrind      : heap memory (massif) and cache simulation (cachegrind)
-#                   — only for N <= VALGRIND_MAX_N to keep runtime feasible
-#
-# The binary outputs "wall_time_ms avg_velocity" on stdout.
-# TIMING_RUNS independent executions are performed per size; the first is
-# discarded (cache warm-up).  Mean, std and mean velocity are reported.
-#
-# Throughput is expressed in million cells per second:
-#   Mcells/s = (N × MEASURE_STEPS) / (mean_ms / 1000) / 1e6
+#                   — only for N <= VALGRIND_MAX_N
 #
 # Usage:
 #   ./tests/benchmarks/bench_profiling.sh [--force|-f]
-#
-# Options:
-#   --force, -f   Overwrite existing raw reports and CSV rows.
-#
-# Output:
-#   tests/<MACHINE>/results_profiling/data_profiling.csv
-#   tests/<MACHINE>/results_profiling/raw/N<size>/
-#
-# Requires: gcc, gprof, perf (optional), valgrind (optional), python3
 # =============================================================================
 
 set -euo pipefail
@@ -62,27 +60,18 @@ BIN_DIR="bin"
 RESULTS_DIR="tests/${MACHINE}/results_profiling"
 CSV_FILE="${RESULTS_DIR}/data_profiling.csv"
 
-# Binary compiled for perf/valgrind (debug info, no instrumentation)
 BIN_PERF="${BIN_DIR}/traffic_seq_perf"
-# Binary compiled for gprof (instrumented, no inlining)
 BIN_GPROF="${BIN_DIR}/traffic_seq_gprof"
 
-# Road lengths to profile.
-# Valgrind is only run for sizes up to VALGRIND_MAX_N (50x slowdown).
 PROFILE_N_VALUES=(8000 64000 500000 2000000)
 VALGRIND_MAX_N=500000
 
-# Fixed density for all profiling runs.
 PROFILE_DENSITY="0.50"
-
-# Steps measured by the binary (warmup excluded from timing).
 MEASURE_STEPS=1000
-
-# Independent timing executions per size (first is discarded as warm-up).
 TIMING_RUNS=10
 
-# Repetitions passed to perf stat -r (averages counters across runs).
-PERF_STAT_REPEATS=1
+# [FIX-4] Raised from 1 to 5 to average PMU counters across multiple runs.
+PERF_STAT_REPEATS=5
 
 CSV_HEADER="road_length,density,time_mean_ms,time_std_ms,avg_velocity,\
 throughput_mcells_s,\
@@ -97,7 +86,6 @@ peak_heap_mb"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 warmup_ceiling_for() {
     local n="$1"
     local c=$(( n / 10 ))
@@ -127,10 +115,13 @@ already_done() {
         "${CSV_FILE}" 2>/dev/null
 }
 
+# [FIX-3] Anchored regex: appends \b (word boundary) after the keyword so that
+# "instructions" does NOT match "branch-instructions".
+# Uses a word-boundary workaround compatible with grep -E: [^a-zA-Z-] or end-of-line.
 perf_extract() {
     local file="$1" keyword="$2"
     [[ ! -s "${file}" ]] && echo "0" && return
-    grep -iE "^[[:space:]]*[0-9,].*${keyword}" "${file}" \
+    grep -iE "^[[:space:]]*[0-9,].*[[:space:]]${keyword}([[:space:]]|$)" "${file}" \
         | grep -v "^#" \
         | head -1 \
         | awk '{gsub(",", "", $1); printf "%d", $1+0}' \
@@ -146,16 +137,35 @@ print(fmt.format(n / d * 100) if d > 0 else '0.' + '0'*${decimals})
 "
 }
 
+# [FIX-1] Reads $3 = total(B), not $4 = useful-heap(B).
+#          Returns "" (empty string) when the file is empty or contains the
+#          SKIPPED sentinel, so the CSV column is blank for N > VALGRIND_MAX_N.
 parse_peak_mb() {
     local file="$1"
-    [[ ! -s "${file}" ]] && echo "0.000" && return
+
+    # File absent or empty → Massif not yet run (error in collection).
+    [[ ! -s "${file}" ]] && echo "" && return
+
+    # Sentinel written by run_massif when N > VALGRIND_MAX_N.
+    if grep -q "^SKIPPED$" "${file}" 2>/dev/null; then
+        echo ""
+        return
+    fi
+
     awk '
     /^-+$/ { in_table=1; next }
     in_table && /^[[:space:]]*[0-9]/ {
         gsub(",", "")
-        if ($4+0 > peak) peak = $4+0
+        # $3 = total(B)  — this is the correct column for peak heap total.
+        # $4 = useful-heap(B), $5 = extra-heap(B), $6 = stacks(B).
+        if ($3+0 > peak) peak = $3+0
     }
-    END { printf "%.3f", peak / 1024 / 1024 }
+    END {
+        if (peak > 0)
+            printf "%.3f", peak / 1024 / 1024
+        else
+            print ""
+    }
     ' "${file}"
 }
 
@@ -175,11 +185,8 @@ compile_binaries() {
         log_info "  Already compiled: ${BIN_PERF}"
     fi
 
-    # -fno-inline prevents the compiler from merging simulation_step and
-    # compute_next_generation into the caller, which would make gprof report
-    # 100% of time in main() and hide the real hot function.
     if [[ "${FORCE}" -eq 1 ]] || [[ ! -x "${BIN_GPROF}" ]]; then
-        local cmd="gcc -fno-inline -g  -pg -std=c11 -D_POSIX_C_SOURCE=200809L \
+        local cmd="gcc -fno-inline -g -pg -std=c11 -D_POSIX_C_SOURCE=200809L \
 -Iinclude -Wno-unknown-pragmas ${SRC_FILES} -o ${BIN_GPROF} -lm"
         log_info "  gprof binary: ${cmd}"
         eval "${cmd}" && log_ok "${BIN_GPROF}" || { log_error "Compilation failed"; exit 1; }
@@ -201,7 +208,6 @@ run_timing_multi() {
     local warmup
     warmup=$(warmup_ceiling_for "${n}")
 
-    # Warm-up run: discarded
     "${BIN_PERF}" "${n}" "${PROFILE_DENSITY}" "${warmup}" "${MEASURE_STEPS}" \
         > /dev/null 2>&1 || true
 
@@ -293,7 +299,7 @@ run_perf() {
     local out="${raw_dir}/perf_stat.txt"
     should_skip "${out}" && return
 
-    log_info "  perf stat N=${n}"
+    log_info "  perf stat N=${n} (repeats=${PERF_STAT_REPEATS})"
     if ! command -v perf &>/dev/null; then
         log_warn "  perf not found — skipping hardware counters"
         touch "${out}"; return
@@ -349,16 +355,19 @@ run_massif() {
     local n="$1" raw_dir="$2"
     local out="${raw_dir}/massif_report.txt"
 
+    # [FIX-2] Write a non-empty sentinel "SKIPPED" so that parse_peak_mb
+    # can distinguish "not yet run" (empty) from "intentionally skipped".
     if (( n > VALGRIND_MAX_N )); then
         log_info "  massif SKIPPED (N=${n} > ${VALGRIND_MAX_N})"
-        touch "${out}"; return
+        echo "SKIPPED" > "${out}"
+        return
     fi
     should_skip "${out}" && return
 
     log_info "  valgrind massif N=${n}"
     if ! command -v valgrind &>/dev/null; then
         log_warn "  valgrind not found — skipping"
-        touch "${out}"; return
+        echo "SKIPPED" > "${out}"; return
     fi
 
     local warmup
@@ -377,15 +386,17 @@ run_cachegrind() {
     local n="$1" raw_dir="$2"
     local out="${raw_dir}/cachegrind_report.txt"
 
+    # [FIX-2] Same sentinel pattern as run_massif.
     if (( n > VALGRIND_MAX_N )); then
         log_info "  cachegrind SKIPPED (N=${n} > ${VALGRIND_MAX_N})"
-        touch "${out}"; return
+        echo "SKIPPED" > "${out}"
+        return
     fi
     should_skip "${out}" && return
 
     log_info "  valgrind cachegrind N=${n}"
     if ! command -v valgrind &>/dev/null; then
-        touch "${out}"; return
+        echo "SKIPPED" > "${out}"; return
     fi
 
     local warmup
@@ -436,6 +447,9 @@ profile_size() {
     # --- hardware counters ---
     local perf_file="${raw_dir}/perf_stat.txt"
 
+    # [FIX-3] perf_extract now uses an anchored regex; the keyword must be
+    # followed by whitespace or end-of-line, preventing "instructions" from
+    # matching "branch-instructions".
     local cycles instructions ipc
     cycles=$(      perf_extract "${perf_file}" "cycles")
     instructions=$(perf_extract "${perf_file}" "instructions")
@@ -470,7 +484,7 @@ print(f'{i/c:.4f}' if c > 0 else '0.0000')
     branch_miss_pct=$(compute_ratio "${branch_misses}" "${branch_instructions}")
 
     local peak_heap_mb
-    peak_heap_mb=$(parse_peak_mb "${raw_dir}/massif_report.txt") || peak_heap_mb="0.000"
+    peak_heap_mb=$(parse_peak_mb "${raw_dir}/massif_report.txt") || peak_heap_mb=""
 
     # Remove existing row if --force
     if [[ "${FORCE}" -eq 1 ]] && [[ -f "${CSV_FILE}" ]]; then
