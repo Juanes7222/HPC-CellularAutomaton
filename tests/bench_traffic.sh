@@ -3,19 +3,22 @@
 # bench_traffic.sh  --  Traffic Automaton OpenMP Benchmark
 #
 # Runs all measurement combinations and writes every result to a single CSV.
-# No analysis is performed here — that is the responsibility of a separate
+# No analysis is performed here; that is the responsibility of a separate
 # script that reads the CSV after the benchmark completes.
 #
 # Measurement matrix
 # ------------------
-# Scaling experiment  (all N × all thread counts, density=0.50):
+# Scaling experiment  (all N x all thread counts, density=0.50):
 #   Answers: how does parallelism scale? where does memory bandwidth limit speedup?
 #
-# Density experiment  (N=2M, threads=seq+12, all density values):
+# Density experiment  (N=20M, threads=seq+4+8+12, all density values):
 #   Answers: does car density (branch predictability) affect throughput?
-#   Rows already covered by the scaling experiment are skipped automatically.
+#   N=20M is intentionally outside N_VALUES so it represents a distinct
+#   working-set point (160 MB); deduplication applies only within the
+#   resume/incremental mechanism (row_already_recorded), NOT between
+#   the scaling and density experiments.
 #
-# Loop order: repetition (outer) → configuration (inner)
+# Loop order: repetition (outer) -> configuration (inner)
 # -------------------------------------------------------
 # This is critical for benchmark validity. If repetitions were the inner loop,
 # consecutive measurements of the same configuration would find the working set
@@ -30,6 +33,20 @@
 # converged runs across repetitions should produce nearly identical velocity
 # values. Large variance across reps is a direct indicator that the warmup
 # ceiling was too low and steady state was not reached before timing started.
+#
+# Fixes applied (v2):
+#   [FIX-1] DENSITY_EXPERIMENT_N comment corrected: N=20M is never in N_VALUES
+#           so row_already_recorded() does not deduplicate across experiments.
+#           The comment claiming automatic cross-experiment dedup was wrong.
+#   [FIX-3] sudo_keeper_pid: 'local' declaration separated from $! assignment
+#           to avoid bash capturing $? instead of $! in combined form.
+#   [FIX-4] EXIT trap moved to immediately after sudo_keeper fork and BEFORE
+#           optimize_system, guaranteeing restore_system runs on any failure.
+#   [FIX-6] run_binary output regex changed from (\.[0-9]+)? to (\.[0-9]*)?
+#           so that integer "0" and "0." forms are accepted without triggering
+#           a spurious log_error.
+#   [FIX-7] DENSITY_EXPERIMENT_THREADS expanded from (0 12) to (0 4 8 12) to
+#           enable density x thread-count interaction analysis in the report.
 #
 # Usage:
 #   ./tests/benchmarks/bench_traffic.sh [machine_flag]
@@ -71,22 +88,31 @@ ALL_THREAD_COUNTS=(0 2 4 6 8 12)
 # Number of timed steps per measurement (warmup excluded from the clock).
 MEASURE_STEPS=1000
 
-# N values — one per memory level.
-# Working set = 2 × N × 4 bytes (two int buffers):
-#   N =     8 000  →    64 KB  (L1-bound)
-#   N =    64 000  →   512 KB  (L2-bound)
-#   N =   500 000  →     4 MB  (upper L3)
-#   N = 2 000 000  →    16 MB  (L3/DRAM boundary)
-#   N = 5 000 000  →    40 MB  (RAM-bound, strong-scaling reference)
-#   N =10 000 000  →    80 MB  (clearly DRAM-bound)
+# N values for the scaling experiment -- one per memory level.
+# Working set = 2 x N x 4 bytes (two int32 buffers):
+#   N =     8 000  ->    64 KB  (L1-bound)
+#   N =    64 000  ->   512 KB  (L2-bound)
+#   N =   500 000  ->     4 MB  (upper L3)
+#   N = 2 000 000  ->    16 MB  (L3/DRAM boundary)
+#   N = 5 000 000  ->    40 MB  (RAM-bound, strong-scaling reference)
+#   N =10 000 000  ->    80 MB  (clearly DRAM-bound)
 N_VALUES=(8000 64000 500000 2000000 5000000 10000000)
 
 # Density fixed for the scaling experiment.
 SCALING_DENSITY="0.50"
 
 # Density experiment parameters.
+# [FIX-1] N=20M (160 MB working set) is intentionally NOT in N_VALUES.
+# It is a dedicated, deeply DRAM-bound point for the density sweep.
+# The deduplication guard (row_already_recorded) prevents re-running rows
+# on --resume but does NOT link rows between scaling and density experiments.
 DENSITY_EXPERIMENT_N=20000000
-DENSITY_EXPERIMENT_THREADS=(0 12)
+
+# [FIX-7] Added t=4 and t=8 to enable density x threads interaction analysis.
+# t=0 (seq) and t=12 (max) provide the performance envelope;
+# t=4 and t=8 fill in the scaling curve at intermediate thread counts.
+DENSITY_EXPERIMENT_THREADS=(0 4 8 12)
+
 DENSITY_VALUES=(0.10 0.30 0.50 0.70 0.90)
 
 REPETITIONS=10
@@ -173,8 +199,11 @@ run_binary() {
     ms=$(      echo "${output}" | awk '{print $1}')
     velocity=$(echo "${output}" | awk '{print $2}')
 
-    if ! [[ "${ms}" =~ ^[0-9]+(\.[0-9]+)?$ && \
-            "${velocity}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    # [FIX-6] Use (\.[0-9]*)? instead of (\.[0-9]+)? so that bare integers
+    # ("0", "123") and forms like "0." are accepted without triggering a
+    # spurious log_error when the binary reports a zero-time result.
+    if ! [[ "${ms}"       =~ ^[0-9]+(\.[0-9]*)?$ && \
+            "${velocity}" =~ ^[0-9]+(\.[0-9]*)?$ ]]; then
         log_error "Unexpected binary output: '${output}'"
         echo "0.000 0.000000"; return
     fi
@@ -233,7 +262,7 @@ run_benchmark() {
     build_density_configurations density_configs
     all_configs=("${scaling_configs[@]}" "${density_configs[@]}")
 
-    log_section "Starting benchmark: ${#all_configs[@]} configurations × ${REPETITIONS} repetitions"
+    log_section "Starting benchmark: ${#all_configs[@]} configurations x ${REPETITIONS} repetitions"
 
     for rep in $(seq 1 "${REPETITIONS}"); do
         log_section "Repetition ${rep} / ${REPETITIONS}"
@@ -272,6 +301,8 @@ run_benchmark() {
 # ---------------------------------------------------------------------------
 
 print_raw_averages() {
+    # [FIX-5] Ensure RESULTS_DIR exists when this function is called standalone.
+    mkdir -p "${RESULTS_DIR}"
     local summary="${RESULTS_DIR}/summary_raw.txt"
 
     {
@@ -313,15 +344,19 @@ print_banner() {
     echo -e "${BOLD}"
     echo "================================================================"
     echo "   Traffic Automaton — OpenMP Benchmark"
-    echo "   Machine       : ${MACHINE_FLAG}"
-    echo "   Host          :  $(cat /etc/hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo 'unknown')"
-    echo "   N values      : ${N_VALUES[*]}"
-    echo "   Thread counts : ${ALL_THREAD_COUNTS[*]}"
-    echo "   Measure steps : ${MEASURE_STEPS}"
-    echo "   Repetitions   : ${REPETITIONS}"
-    echo "   Bench CPUs    : ${BENCH_CPUS}"
-    echo "   Loop order    : repetition (outer) -> config (inner)"
-    echo "   Date          : $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "   Machine         : ${MACHINE_FLAG}"
+    echo "   Host            : $(cat /etc/hostname 2>/dev/null \
+                                   || cat /proc/sys/kernel/hostname 2>/dev/null \
+                                   || echo 'unknown')"
+    echo "   N values        : ${N_VALUES[*]}"
+    echo "   Thread counts   : ${ALL_THREAD_COUNTS[*]}"
+    echo "   Measure steps   : ${MEASURE_STEPS}"
+    echo "   Repetitions     : ${REPETITIONS}"
+    echo "   Bench CPUs      : ${BENCH_CPUS}"
+    echo "   Density exp N   : ${DENSITY_EXPERIMENT_N}"
+    echo "   Density threads : ${DENSITY_EXPERIMENT_THREADS[*]}"
+    echo "   Loop order      : repetition (outer) -> config (inner)"
+    echo "   Date            : $(date '+%Y-%m-%d %H:%M:%S')"
     echo "================================================================"
     echo -e "${RESET}"
 }
@@ -355,7 +390,7 @@ inhibit_sleep() {
 
 main() {
     inhibit_sleep "$@"
-    
+
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
 
     if ! binaries_are_built; then
@@ -372,8 +407,18 @@ main() {
     setup_csv "${RESULTS_DIR}" "${CSV}" "${CSV_HEADER}"
 
     sudo -v
+
+    # [FIX-3] Declare local variable BEFORE the background fork so that $!
+    # is captured into a properly initialized local variable in all bash
+    # versions. Combined 'local var=$!' is fragile because 'local' is a
+    # command that resets $? and can behave inconsistently with $!.
+    local sudo_keeper_pid
     ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
-    local sudo_keeper_pid=$!
+    sudo_keeper_pid=$!
+
+    # [FIX-4] Set the EXIT trap HERE, immediately after capturing the PID
+    # and BEFORE optimize_system. This guarantees restore_system is called
+    # even if optimize_system fails or the script is interrupted mid-setup.
     trap 'kill "${sudo_keeper_pid}" 2>/dev/null; restore_system' EXIT
 
     optimize_system
@@ -384,4 +429,4 @@ main() {
     print_raw_averages
 }
 
-main
+main "$@"
