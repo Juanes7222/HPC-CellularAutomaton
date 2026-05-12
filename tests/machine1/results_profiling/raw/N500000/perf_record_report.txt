@@ -1,0 +1,62 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 5K of event 'cpu/cycles/P'
+# Event count (approx.): 25756988476
+#
+# Overhead  Command          Shared Object      Symbol                          
+# ........  ...............  .................  ................................
+#
+    73.33%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
+            |
+            ---compute_next_generation
+               simulation_step
+               |          
+               |--47.70%--simulation_warmup_until_steady_state
+               |          main
+               |          0x7ffff7cb96c1
+               |          __libc_start_main
+               |          _start
+               |          
+                --25.62%--simulation_measure
+                          main
+                          0x7ffff7cb96c1
+                          __libc_start_main
+                          _start
+
+    26.60%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+            |
+            ---count_departed_cars
+               simulation_step
+               |          
+               |--16.95%--simulation_warmup_until_steady_state
+               |          main
+               |          0x7ffff7cb96c1
+               |          __libc_start_main
+               |          _start
+               |          
+                --9.65%--simulation_measure
+                          main
+                          0x7ffff7cb96c1
+                          __libc_start_main
+                          _start
+
+     0.02%  traffic_seq_per  libc.so.6          [.] random
+     0.02%  traffic_seq_per  [kernel.kallsyms]  [k] ktime_get_update_offsets_now
+     0.02%  traffic_seq_per  [kernel.kallsyms]  [k] __timekeeping_advance
+     0.02%  traffic_seq_per  [kernel.kallsyms]  [k] sysvec_apic_timer_interrupt
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] mas_next_slot
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] __irqentry_text_end
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] irqentry_exit
+     0.00%  perf-exec        [kernel.kallsyms]  [k] srso_alias_safe_ret
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_event_update_userpage
+     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
+     0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
+
+
+#
+# (Tip: Save output of perf stat using: perf stat record <target workload>)
+#

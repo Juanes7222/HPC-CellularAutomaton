@@ -1,0 +1,24 @@
+# started on Tue May 12 10:17:44 2026
+
+
+ Performance counter stats for 'bin/traffic_seq_perf 500000 0.50 50000 1000':
+
+       29602105701      cycles                                                                  (50.01%)
+      109709091191      instructions                                                            (50.00%)
+         828004156      cache-references                                                        (50.01%)
+           6062664      cache-misses                                                            (50.01%)
+       30636864023      L1-dcache-loads                                                         (50.01%)
+         409162198      L1-dcache-load-misses                                                   (49.99%)
+   <not supported>      LLC-loads                                                             
+   <not supported>      LLC-load-misses                                                       
+           6613037      dTLB-loads                                                              (50.00%)
+             19662      dTLB-load-misses                                                        (49.99%)
+        6424280699      branch-instructions                                                     (49.99%)
+          24141007      branch-misses                                                           (49.99%)
+
+       6.360988787 seconds time elapsed
+
+       6.310261000 seconds user
+       0.000991000 seconds sys
+
+
