@@ -3,22 +3,22 @@ Flat profile:
 Each sample counts as 0.01 seconds.
   %   cumulative   self              self     total           
  time   seconds   seconds    calls  ms/call  ms/call  name    
- 66.67      0.04     0.04     2150     0.02     0.02  compute_next_generation
- 33.33      0.06     0.02     2150     0.01     0.01  count_departed_cars
-  0.00      0.06     0.00     2150     0.00     0.03  simulation_step
-  0.00      0.06     0.00     2150     0.00     0.00  swap_generation_buffers
-  0.00      0.06     0.00        3     0.00     0.00  cli_parse_positive_int
-  0.00      0.06     0.00        2     0.00     0.00  allocate_int_array
-  0.00      0.06     0.00        1     0.00     0.00  cli_parse_density
-  0.00      0.06     0.00        1     0.00     0.00  count_occupied_cells
-  0.00      0.06     0.00        1     0.00     0.00  log_warmup_result
-  0.00      0.06     0.00        1     0.00     0.00  road_create
-  0.00      0.06     0.00        1     0.00     0.00  road_destroy
-  0.00      0.06     0.00        1     0.00     0.00  seed_cells_randomly
-  0.00      0.06     0.00        1     0.00    27.91  simulation_measure
-  0.00      0.06     0.00        1     0.00    32.09  simulation_warmup_until_steady_state
-  0.00      0.06     0.00        1     0.00     0.00  timing_elapsed_ms
-  0.00      0.06     0.00        1     0.00     0.00  timing_start
+ 60.00      0.03     0.03     1750     0.02     0.02  compute_next_generation
+ 40.00      0.05     0.02     1750     0.01     0.01  count_departed_cars
+  0.00      0.05     0.00     1750     0.00     0.03  simulation_step
+  0.00      0.05     0.00     1750     0.00     0.00  swap_generation_buffers
+  0.00      0.05     0.00        3     0.00     0.00  cli_parse_positive_int
+  0.00      0.05     0.00        2     0.00     0.00  allocate_int_array
+  0.00      0.05     0.00        1     0.00     0.00  cli_parse_density
+  0.00      0.05     0.00        1     0.00     0.00  count_occupied_cells
+  0.00      0.05     0.00        1     0.00     0.00  log_warmup_result
+  0.00      0.05     0.00        1     0.00     0.00  road_create
+  0.00      0.05     0.00        1     0.00     0.00  road_destroy
+  0.00      0.05     0.00        1     0.00     0.00  seed_cells_randomly
+  0.00      0.05     0.00        1     0.00    28.57  simulation_measure
+  0.00      0.05     0.00        1     0.00    21.43  simulation_warmup_until_steady_state
+  0.00      0.05     0.00        1     0.00     0.00  timing_elapsed_ms
+  0.00      0.05     0.00        1     0.00     0.00  timing_start
 
  %         the percentage of the total running time of the
 time       program used by this function.
@@ -56,20 +56,20 @@ notice and this notice are preserved.
 		     Call graph (explanation follows)
 
 
-granularity: each sample hit covers 4 byte(s) for 16.67% of 0.06 seconds
+granularity: each sample hit covers 4 byte(s) for 20.00% of 0.05 seconds
 
 index % time    self  children    called     name
-                0.00    0.03    1000/2150        simulation_measure [5]
-                0.00    0.03    1150/2150        simulation_warmup_until_steady_state [4]
-[1]    100.0    0.00    0.06    2150         simulation_step [1]
-                0.04    0.00    2150/2150        compute_next_generation [3]
-                0.02    0.00    2150/2150        count_departed_cars [6]
-                0.00    0.00    2150/2150        swap_generation_buffers [7]
+                0.00    0.02     750/1750        simulation_warmup_until_steady_state [5]
+                0.00    0.03    1000/1750        simulation_measure [4]
+[1]    100.0    0.00    0.05    1750         simulation_step [1]
+                0.03    0.00    1750/1750        compute_next_generation [3]
+                0.02    0.00    1750/1750        count_departed_cars [6]
+                0.00    0.00    1750/1750        swap_generation_buffers [7]
 -----------------------------------------------
                                                  <spontaneous>
-[2]    100.0    0.00    0.06                 main [2]
-                0.00    0.03       1/1           simulation_warmup_until_steady_state [4]
-                0.00    0.03       1/1           simulation_measure [5]
+[2]    100.0    0.00    0.05                 main [2]
+                0.00    0.03       1/1           simulation_measure [4]
+                0.00    0.02       1/1           simulation_warmup_until_steady_state [5]
                 0.00    0.00       3/3           cli_parse_positive_int [8]
                 0.00    0.00       1/1           cli_parse_density [10]
                 0.00    0.00       1/1           road_create [13]
@@ -78,22 +78,22 @@ index % time    self  children    called     name
                 0.00    0.00       1/1           timing_elapsed_ms [16]
                 0.00    0.00       1/1           road_destroy [14]
 -----------------------------------------------
-                0.04    0.00    2150/2150        simulation_step [1]
-[3]     66.7    0.04    0.00    2150         compute_next_generation [3]
+                0.03    0.00    1750/1750        simulation_step [1]
+[3]     60.0    0.03    0.00    1750         compute_next_generation [3]
 -----------------------------------------------
                 0.00    0.03       1/1           main [2]
-[4]     53.5    0.00    0.03       1         simulation_warmup_until_steady_state [4]
-                0.00    0.03    1150/2150        simulation_step [1]
+[4]     57.1    0.00    0.03       1         simulation_measure [4]
+                0.00    0.03    1000/1750        simulation_step [1]
 -----------------------------------------------
-                0.00    0.03       1/1           main [2]
-[5]     46.5    0.00    0.03       1         simulation_measure [5]
-                0.00    0.03    1000/2150        simulation_step [1]
+                0.00    0.02       1/1           main [2]
+[5]     42.9    0.00    0.02       1         simulation_warmup_until_steady_state [5]
+                0.00    0.02     750/1750        simulation_step [1]
 -----------------------------------------------
-                0.02    0.00    2150/2150        simulation_step [1]
-[6]     33.3    0.02    0.00    2150         count_departed_cars [6]
+                0.02    0.00    1750/1750        simulation_step [1]
+[6]     40.0    0.02    0.00    1750         count_departed_cars [6]
 -----------------------------------------------
-                0.00    0.00    2150/2150        simulation_step [1]
-[7]      0.0    0.00    0.00    2150         swap_generation_buffers [7]
+                0.00    0.00    1750/1750        simulation_step [1]
+[7]      0.0    0.00    0.00    1750         swap_generation_buffers [7]
 -----------------------------------------------
                 0.00    0.00       3/3           main [2]
 [8]      0.0    0.00    0.00       3         cli_parse_positive_int [8]
@@ -219,9 +219,9 @@ notice and this notice are preserved.
 
 Index by function name
 
-   [9] allocate_int_array (road.c) [12] log_warmup_result (seq_main.c) [4] simulation_warmup_until_steady_state
+   [9] allocate_int_array (road.c) [12] log_warmup_result (seq_main.c) [5] simulation_warmup_until_steady_state
   [10] cli_parse_density      [13] road_create             [7] swap_generation_buffers (simulation.c)
    [8] cli_parse_positive_int [14] road_destroy           [16] timing_elapsed_ms
    [3] compute_next_generation (simulation.c) [15] seed_cells_randomly (road.c) [17] timing_start
-   [6] count_departed_cars (simulation.c) [5] simulation_measure
+   [6] count_departed_cars (simulation.c) [4] simulation_measure
   [11] count_occupied_cells (road.c) [1] simulation_step

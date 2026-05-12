@@ -4,55 +4,84 @@
 # Total Lost Samples: 0
 #
 # Samples: 46  of event 'cpu/cycles/P'
-# Event count (approx.): 266657117
+# Event count (approx.): 223626846
 #
 # Overhead  Command          Shared Object      Symbol                        
 # ........  ...............  .................  ..............................
 #
-    67.01%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
+    64.23%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
             |
             ---compute_next_generation
                simulation_step
                |          
-               |--45.17%--simulation_measure
+               |--46.49%--simulation_measure
                |          main
                |          0x7ffff7cb96c1
                |          __libc_start_main
                |          _start
                |          
-                --21.84%--simulation_warmup_until_steady_state
+                --17.74%--simulation_warmup_until_steady_state
                           main
                           0x7ffff7cb96c1
                           __libc_start_main
                           _start
 
-    32.94%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+    30.67%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+            |          
+            |--25.16%--count_departed_cars
+            |          simulation_step
+            |          |          
+            |          |--15.01%--simulation_measure
+            |          |          main
+            |          |          0x7ffff7cb96c1
+            |          |          __libc_start_main
+            |          |          _start
+            |          |          
+            |           --10.15%--simulation_warmup_until_steady_state
+            |                     main
+            |                     0x7ffff7cb96c1
+            |                     __libc_start_main
+            |                     _start
+            |          
+             --5.50%--compute_next_generation
+                       simulation_step
+                       simulation_measure
+                       main
+                       0x7ffff7cb96c1
+                       __libc_start_main
+                       _start
+
+     5.04%  traffic_seq_per  [kernel.kallsyms]  [k] sched_tick
             |
-            ---count_departed_cars
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               compute_next_generation
                simulation_step
-               |          
-               |--16.54%--simulation_warmup_until_steady_state
-               |          main
-               |          0x7ffff7cb96c1
-               |          __libc_start_main
-               |          _start
-               |          
-                --16.39%--simulation_measure
-                          main
-                          0x7ffff7cb96c1
-                          __libc_start_main
-                          _start
+               simulation_warmup_until_steady_state
+               main
+               0x7ffff7cb96c1
+               __libc_start_main
+               _start
 
-     0.05%  traffic_seq_per  [kernel.kallsyms]  [k] freader_fetch
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] __perf_event_task_sched_in
-     0.00%  perf-exec        [kernel.kallsyms]  [k] amd_pmu_lbr_enable_all
-     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
+     0.07%  traffic_seq_per  [kernel.kallsyms]  [k] prepend_path
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] srso_alias_safe_ret
+     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_pmu_nop_void
+     0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
      0.00%  perf-exec        [kernel.kallsyms]  [k] native_write_msr
+     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
      0.00%  traffic_seq_per  [kernel.kallsyms]  [k] calc_timer_values
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] local_clock
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_write_msr
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] srso_alias_return_thunk
 
 
 #
-# (Tip: Customize output of perf script with: perf script -F event,ip,sym)
+# (Tip: Create an archive with symtabs to analyse on other machine: perf archive)
 #
