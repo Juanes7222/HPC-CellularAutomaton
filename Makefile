@@ -120,10 +120,22 @@ BIN_OMP_OPT     = $(BIN_DIR)/traffic_omp_opt
 BIN_TESTS       = $(BIN_DIR)/traffic_tests
 
 
-.PHONY: all seq seq_opt omp omp_opt tests debug clean
+CORE_SRCS_MEM = $(SRC_DIR)/road_mem_opt.c  \
+                $(SRC_DIR)/simulation_mem_opt.c \
+                $(SRC_DIR)/cli_args.c       \
+                $(SRC_DIR)/timing.c
+
+BIN_SEQ_MEM     = $(BIN_DIR)/traffic_seq_mem
+BIN_SEQ_MEM_OPT = $(BIN_DIR)/traffic_seq_mem_opt
+BIN_OMP_MEM     = $(BIN_DIR)/traffic_omp_mem
+BIN_OMP_MEM_OPT = $(BIN_DIR)/traffic_omp_mem_opt
 
 
-all: seq seq_opt omp omp_opt tests
+
+.PHONY: all seq seq_opt omp omp_opt seq_mem seq_mem_opt omp_mem omp_mem_opt tests debug clean
+
+
+all: seq seq_opt omp omp_opt seq_mem seq_mem_opt omp_mem omp_mem_opt tests
 
 
 seq: $(BIN_SEQ)
@@ -153,6 +165,22 @@ $(BIN_OMP_OPT): $(CORE_SRCS) $(SRC_DIR)/omp_main.c | $(BIN_DIR)
 	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
 	@echo "Built: $@  [OpenMP, -O3 -march=native -flto ...]"
 
+seq_mem: $(BIN_SEQ_MEM)
+$(BIN_SEQ_MEM): $(CORE_SRCS_MEM) $(SRC_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
+
+seq_mem_opt: $(BIN_SEQ_MEM_OPT)
+$(BIN_SEQ_MEM_OPT): $(CORE_SRCS_MEM) $(SRC_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
+
+omp_mem: $(BIN_OMP_MEM)
+$(BIN_OMP_MEM): $(CORE_SRCS_MEM) $(SRC_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
+
+omp_mem_opt: $(BIN_OMP_MEM_OPT)
+$(BIN_OMP_MEM_OPT): $(CORE_SRCS_MEM) $(SRC_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
+
 
 tests: $(BIN_TESTS)
 
@@ -180,11 +208,15 @@ clean:
 
 help:
 	@echo ""
-	@echo "  make all        → seq  seq_opt  omp  omp_opt  tests"
+	@echo "  make all        → seq  seq_opt  omp  omp_opt  seq_mem  seq_mem_opt  omp_mem  omp_mem_opt  tests"
 	@echo "  make seq        → bin/traffic_seq        (serial, -O0)"
 	@echo "  make seq_opt    → bin/traffic_seq_opt    (serial, -O3 + flags)"
 	@echo "  make omp        → bin/traffic_omp        (OpenMP, -O0)"
 	@echo "  make omp_opt    → bin/traffic_omp_opt    (OpenMP, -O3 + flags)"
+	@echo "  make seq_mem    → bin/traffic_seq_mem    (serial, memory-optimized)"
+	@echo "  make seq_mem_opt → bin/traffic_seq_mem_opt (serial, memory-optimized with compiler flags)"
+	@echo "  make omp_mem    → bin/traffic_omp_mem    (OpenMP, memory-optimized)"
+	@echo "  make omp_mem_opt → bin/traffic_omp_mem_opt (OpenMP, memory-optimized with compiler flags)"
 	@echo "  make tests      → bin/traffic_tests      (validador)"
 	@echo "  make debug      → builds con -fsanitize=address,undefined"
 	@echo "  make clean      → elimina bin/"

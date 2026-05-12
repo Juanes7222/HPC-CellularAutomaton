@@ -80,6 +80,10 @@ BIN_SEQ_OPT="${BIN_DIR}/traffic_seq_opt"
 BIN_OMP="${BIN_DIR}/traffic_omp"
 BIN_OMP_OPT="${BIN_DIR}/traffic_omp_opt"
 BIN_TESTS="${BIN_DIR}/traffic_tests"
+BIN_SEQ_MEM="${BIN_DIR}/traffic_seq_mem"
+BIN_SEQ_MEM_OPT="${BIN_DIR}/traffic_seq_mem_opt"
+BIN_OMP_MEM="${BIN_DIR}/traffic_omp_mem"
+BIN_OMP_MEM_OPT="${BIN_DIR}/traffic_omp_mem_opt"
 
 # Thread counts to benchmark. 0 = sequential binary.
 ALL_THREAD_COUNTS=(0 2 4 6 8 12)
@@ -122,8 +126,10 @@ CSV_HEADER="impl,threads,road_length,density,repetition,wall_time_ms,avg_velocit
 # ---------------------------------------------------------------------------
 
 binaries_are_built() {
-    [[ -x "${BIN_SEQ}"     && -x "${BIN_SEQ_OPT}" && \
-       -x "${BIN_OMP}"     && -x "${BIN_OMP_OPT}" && \
+    [[ -x "${BIN_SEQ}"         && -x "${BIN_SEQ_OPT}"     &&
+       -x "${BIN_OMP}"         && -x "${BIN_OMP_OPT}"     &&
+       -x "${BIN_SEQ_MEM}"     && -x "${BIN_SEQ_MEM_OPT}" &&
+       -x "${BIN_OMP_MEM}"     && -x "${BIN_OMP_MEM_OPT}" &&
        -x "${BIN_TESTS}" ]]
 }
 
@@ -187,6 +193,18 @@ run_binary() {
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) \
                 || exit_code=$?
             ;;
+        traffic_seq_mem)
+            output=$(taskset -c "${BENCH_CPU_SINGLE}" \
+                "${BIN_SEQ_MEM}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_seq_mem_opt)
+            output=$(taskset -c "${BENCH_CPU_SINGLE}" \
+                "${BIN_SEQ_MEM_OPT}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
         traffic_omp)
             output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
                 "${BIN_OMP}" "${road_length}" "${density}" \
@@ -196,6 +214,18 @@ run_binary() {
         traffic_omp_opt)
             output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
                 "${BIN_OMP_OPT}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_omp_mem)
+            output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
+                "${BIN_OMP_MEM}" "${road_length}" "${density}" \
+                "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
+                || exit_code=$?
+            ;;
+        traffic_omp_mem_opt)
+            output=$(sudo chrt -f 99 taskset -c "${BENCH_CPUS}" \
+                "${BIN_OMP_MEM_OPT}" "${road_length}" "${density}" \
                 "${max_warmup}" "${MEASURE_STEPS}" "${threads}" 2>/dev/null) \
                 || exit_code=$?
             ;;
@@ -252,9 +282,13 @@ build_scaling_configurations() {
             if [[ "${threads}" -eq 0 ]]; then
                 out_array+=("traffic_seq|${threads}|${road_length}|${SCALING_DENSITY}")
                 out_array+=("traffic_seq_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_seq_mem|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_seq_mem_opt|${threads}|${road_length}|${SCALING_DENSITY}")
             else
                 out_array+=("traffic_omp|${threads}|${road_length}|${SCALING_DENSITY}")
                 out_array+=("traffic_omp_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_omp_mem|${threads}|${road_length}|${SCALING_DENSITY}")
+                out_array+=("traffic_omp_mem_opt|${threads}|${road_length}|${SCALING_DENSITY}")
             fi
         done
     done
@@ -273,8 +307,10 @@ build_density_configurations() {
             if [[ "${threads}" -eq 0 ]]; then
                 out_array+=("traffic_seq|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
                 out_array+=("traffic_seq_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+                out_array+=("traffic_seq_mem_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
             else
                 out_array+=("traffic_omp_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+                out_array+=("traffic_omp_mem_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
             fi
         done
     done
@@ -383,7 +419,7 @@ print_banner() {
     echo "   Bench CPUs       : ${BENCH_CPUS}"
     echo "   Density exp N    : ${DENSITY_EXPERIMENT_N}"
     echo "   Density threads  : ${DENSITY_EXPERIMENT_THREADS[*]}"
-    echo "   Binaries         : seq  seq_opt  omp  omp_opt"
+    echo "   Binaries         : seq  seq_opt  seq_mem  seq_mem_opt  omp  omp_opt  omp_mem  omp_mem_opt"
     echo "   Loop order       : repetition (outer) -> config (inner)"
     echo "   Date             : $(date '+%Y-%m-%d %H:%M:%S')"
     echo "================================================================"
