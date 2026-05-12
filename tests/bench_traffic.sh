@@ -342,7 +342,7 @@ inhibit_sleep() {
     log_info "Acquiring sleep/suspend inhibitor via systemd-inhibit..."
     exec env BENCH_INHIBIT_ACTIVE=1 \
         systemd-inhibit \
-            --what=sleep:suspend:hibernate:idle \
+            --what=sleep:idle \
             --who="bench_traffic" \
             --why="Benchmark in progress — do not suspend" \
             --mode=block \
