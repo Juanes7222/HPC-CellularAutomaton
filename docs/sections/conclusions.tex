@@ -1,0 +1,46 @@
+
+%===================================
+%===================================
+\section{Conclusiones}
+\label{sec:Conclusiones}
+
+\begin{enumerate}
+   \item
+El resultado más importante del experimento es que la implementación secuencial optimizada tanto en memoria como por el compilador alcanza un speedup cercano a 65x frente a la implementación secuencial base, y lo hace de manera muy estable para todos los tamaños del problema. Para un caso representativo de $N=10$ millones, el tiempo de ejecución se reduce de 29,608 ms a solo 453 ms usando un único hilo, lo cual evidencia que una buena optimización puede ser más efectiva que aumentar el paralelismo.
+
+Lo más interesante de este resultado es que ninguna de las dos optimizaciones funciona bien por sí sola. Cuando solo se aplica la optimización del compilador, la mejora es pequeña, alrededor de 1.09 veces. Cuando solo se aplica la optimización de memoria, el rendimiento incluso empeora ligeramente frente a la versión base. Esto ocurre porque cada optimización ataca un problema distinto, pero ninguna es suficiente por sí sola.
+
+En el caso de la optimización del compilador aplicada sobre la versión base, cada celda del autómata se almacena como un entero de 32 bits (\texttt{int}), por lo que para $N=10$ millones los dos buffers del autómata ocupan aproximadamente 80 MB en total. Aunque el compilador puede acelerar parcialmente el bucle, sigue siendo necesario leer grandes cantidades de datos desde memoria principal, lo que rápidamente se convierte en el principal factor limitante y reduce el impacto de la optimización.
+
+Por otro lado, la optimización de memoria reduce el tamaño de cada celda de 4 bytes a 1 byte (\texttt{uint8\_t}), aprovechando que cada celda solo puede valer 0 o 1. Esto reduce el conjunto de datos de aproximadamente 80 MB a 20 MB, y además fusiona los dos pases del algoritmo en uno solo, reduciendo a la mitad el número de recorridos sobre los datos. Sin embargo, si el compilador no optimiza el código, el trabajo adicional necesario para gestionar esta representación termina siendo más costoso que simplemente trabajar con enteros, lo que explica por qué esta versión no mejora el rendimiento por sí sola.
+
+La gran ganancia aparece cuando ambas optimizaciones se combinan. En ese caso, el compilador puede vectorizar el bucle interno y procesar múltiples celdas \texttt{uint8\_t} en una sola instrucción SIMD, en lugar de operar celda por celda. Esto permite que una sola instrucción calcule decenas de celdas al mismo tiempo de forma muy eficiente. Además, como los datos ocupan mucho menos espacio y se recorren en un único pase, encajan mejor en la caché del procesador y se reducen significativamente los accesos a memoria principal. El efecto combinado de estos dos factores explica de forma clara el gran speedup observado. 
+
+\item
+Al comparar la implementación secuencial optimizada por memoria y compilador (453 ms, un hilo) contra la implementación paralela con OpenMP sin optimización de memoria usando 12 hilos (5\,454 ms), se observa que la versión secuencial optimizada es aproximadamente 12 veces más rápida que la versión paralela de máxima concurrencia sin optimización de memoria. Este resultado reproduce el mismo patrón observado en el proyecto de Jacobi: cuando el cuello de botella principal es el acceso a memoria, agregar hilos sin mejorar la localidad de datos y el uso de caché únicamente incrementa la presión sobre el bus de memoria.
+
+La implementación paralela con OpenMP sin optimización de memoria usando 2 hilos para $N=10$ millones arroja un tiempo de 29\,894 ms, prácticamente idéntico al de la versión secuencial base (29\,608 ms), lo cual indica que con pocos hilos el overhead de sincronización anula completamente cualquier posible ganancia. Solo a partir de 6 hilos el speedup comienza a ser significativo, cercano a 3 veces, alcanzando aproximadamente 5.4x con 12 hilos, lo que corresponde a una eficiencia paralela del 45\%.
+
+\item
+Cuando se combinan todas las optimizaciones, es decir, paralelización con OpenMP junto con optimización de memoria y compilador, utilizando 12 hilos, el speedup total respecto a la implementación secuencial base alcanza aproximadamente 420x para $N=10$ millones y si la comparamos con la versión secuencial optimizada, el speedup es de 4.33x. El escalado paralelo de esta variante es saludable: cada duplicación del número de hilos reduce aproximadamente a la mitad el tiempo de ejecución, y la eficiencia paralela se mantiene estable alrededor del 53\% para tamaños de problema grandes, lo cual es un resultado muy bueno para una carga de trabajo dominada por accesos secuenciales a memoria.
+
+Para tamaños pequeños, como $N=8$ mil, el comportamiento colapsa, todas las configuraciones de hilos presentan tiempos cercanos a 1 ms, independientemente del paralelismo, debido a que el problema cabe completamente en la caché L2 o L3 y el overhead de OpenMP domina el tiempo total.
+
+\item
+La implementación paralela con OpenMP optimizada únicamente por compilador aporta muy poco beneficio adicional frente a la implementación paralela con OpenMP sin optimizaciones. Para $N=10$ millones con 12 hilos, la versión base tarda 5\,454 ms mientras que la versión optimizada por compilador tarda 5\,439 ms, una diferencia inferior al 0.3\%. El compilador no puede vectorizar de manera efectiva un bucle paralelo de OpenMP que opera sobre la estructura de datos original, y el cuello de botella continúa siendo el acceso a memoria. Este resultado refuerza que la ganancia real de la optimización de compilador está fuertemente condicionada al layout de memoria.
+
+\item
+Las implementaciones paralelas con OpenMP sin optimización y con OpenMP optimizada únicamente por compilador no logran superar en ningún caso a la mejor implementación secuencial. Incluso con $p=12$ hilos, el speedup máximo obtenido es de apenas 0.10 veces, lo que implica que estas variantes son entre 10 y 12 veces más lentas que la implementación secuencial optimizada por memoria y compilador. Este comportamiento se explica porque el paralelismo introduce overhead adicional asociado a la creación y sincronización de hilos, así como mayor tráfico de caché, pero no resuelve el problema principal, los arreglos siguen almacenados como enteros y el conjunto de datos continúa saturando el acceso a memoria.
+
+\item
+La implementación paralela con OpenMP optimizada tanto por memoria como por compilador es la única variante paralela que logra superar a la referencia secuencial, y esto solo ocurre a partir de tamaños de problema de $N=64$ mil con $p \geq 4$ hilos. Para $N=8$ mil, el speedup cae por debajo de 1 incluso utilizando 12 hilos, lo que indica claramente que el overhead asociado a OpenMP es mayor que el beneficio del paralelismo cuando el conjunto de datos es pequeño.
+
+\item
+El speedup máximo alcanzado por la implementación paralela con OpenMP optimizada por memoria y compilador es de aproximadamente 6.4 veces usando 12 hilos para $N=10$ millones. Aunque esta mejora es real, resulta modesta si se considera el número de hilos disponibles. La eficiencia paralela se mantiene entre el 53\% y el 55\% para tamaños de problema mayores o iguales a $N=500$ mil, lo que indica que el algoritmo no escala de forma lineal con el número de hilos. Este comportamiento es típico de cargas de trabajo limitadas por el acceso a memoria, donde el ancho de banda de la memoria principal es el recurso compartido y dominante.
+
+\item
+Para $N=8$ mil y $p=12$ hilos, la eficiencia paralela es de apenas 2.7\%, lo que confirma que el problema es demasiado pequeño para amortizar el costo del paralelismo. A medida que el tamaño del problema aumenta, la eficiencia se estabiliza alrededor del 54\% independientemente del número de hilos utilizados. Esto sugiere que el sistema alcanza rápidamente el límite del ancho de banda de memoria compartida entre los núcleos y que no es posible escalar más allá sin modificar la forma en que se accede y se organiza la información en memoria.
+
+\item
+La velocidad media del flujo de vehículos es prácticamente idéntica en todas las implementaciones, con un valor cercano a 0.989 para tamaños grandes y densidad $\rho = 0.5$. Esto confirma que todas las variantes producen el mismo resultado físicamente correcto y que las optimizaciones aplicadas no alteran el resultado del autómata celular, sino únicamente su rendimiento computacional.
+\end{enumerate}
