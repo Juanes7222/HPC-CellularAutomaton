@@ -262,6 +262,20 @@ de infraestructura (\texttt{simulation\_step}, \texttt{swap\_generation\_buffers
    \label{fig:hotspots}
 \end{figure}
 
+\begin{figure}[H]
+   \centering
+   \includegraphics[width=1\textwidth]{images/profiling/06_hotspot_inner_gprof.png}
+   \caption{Hostspot interno de \texttt{compute\_next\_generation} según gprof para $N = 2000000$}
+   \label{fig:gprof_callgraph}
+\end{figure}
+
+\begin{figure}[H]
+   \centering
+   \includegraphics[width=1\textwidth]{images/profiling/07_hotspot_inner_perf.png}
+   \caption{Hostspot interno de \texttt{compute\_next\_generation} según perf para $N = 2000000$}
+   \label{fig:perf_callgraph}
+\end{figure}
+
 Valgrind Cachegrind refuerza este diagnóstico con
 mayor resolución: \texttt{compute\_next\_generation} concentra el 72.9\% de las
 referencias de instrucción para $N = 8000$, el 73\% para $N = 64000$ y el 73\%
@@ -283,10 +297,23 @@ Ambas líneas son el objetivo natural de cualquier optimización dirigida a esta
    \label{fig:cachegrind_hotspots}
 \end{figure}
 
+El análisis con Valgrind Massif muestra que el consumo de heap escala linealmente
+con $N$, pasando de 0.061\,MB para $N = 8000$ hasta 3.815\,MB para $N = 500000$.
+Este comportamiento coincide con el modelo teórico $M_{\text{teórico}} = 2 \cdot
+N \cdot 4 / 1024^2$\,MB derivado de los dos arrays de enteros de tamaño $N$
+reservados dinámicamente: la relación entre el valor medido y el teórico es del
+99.94\% para $N = 8000$ y $N = 64000$, y del 100.01\% para $N = 500000$.
+La fracción de bytes útiles respecto al total medido supera el 99.95\% en todos
+los tamaños, lo que confirma que el gestor de memoria del sistema no introduce
+overhead de fragmentación ni metadata anómala y que el consumo observado se explica
+íntegramente por las reservas explícitas del programa.
+Para $N = 2000000$ el valor teórico esperado es de aproximadamente 15.26\,MB,
+pero Massif no pudo ejecutarse por superar el límite $N_{\max} = 500000$
+establecido en el script.
 
 \subsubsection{Estabilidad temporal y throughput}
 
-El throughput se mantiene prácticamente constante en torno a 256--257 Mcells/s a lo
+El throughput se mantiene prácticamente constante en torno a 254--256 Mcells/s a lo
 largo de todos los tamaños, con una caída máxima del 1.2\% al pasar de $N = 8000$
 a $N = 2000000$.
 Esta estabilidad refleja que el núcleo de cómputo del autómata es
@@ -353,18 +380,12 @@ al inicio de la medición; al crecer $N$ las páginas se reutilizan con mayor
 frecuencia y la presión sobre el TLB disminuye.
 
 
-\subsubsection{Uso de memoria dinámica}
+\subsubsection{Accesos a memoria por nivel}
+\begin{figure}[H]
+   \centering
+   \includegraphics[width=1\textwidth]{images/profiling/11_perf_mem.png}
+   \caption{Accesos a memoria por nivel}
+   \label{fig:hotspot_inner}
+\end{figure}
 
-El análisis con Valgrind Massif muestra que el consumo de heap escala linealmente
-con $N$, pasando de 0.061\,MB para $N = 8000$ hasta 3.815\,MB para $N = 500000$.
-Este comportamiento coincide con el modelo teórico $M_{\text{teórico}} = 2 \cdot
-N \cdot 4 / 1024^2$\,MB derivado de los dos arrays de enteros de tamaño $N$
-reservados dinámicamente: la relación entre el valor medido y el teórico es del
-99.94\% para $N = 8000$ y $N = 64000$, y del 100.01\% para $N = 500000$.
-La fracción de bytes útiles respecto al total medido supera el 99.95\% en todos
-los tamaños, lo que confirma que el gestor de memoria del sistema no introduce
-overhead de fragmentación ni metadata anómala y que el consumo observado se explica
-íntegramente por las reservas explícitas del programa.
-Para $N = 2000000$ el valor teórico esperado es de aproximadamente 15.26\,MB,
-pero Massif no pudo ejecutarse por superar el límite $N_{\max} = 500000$
-establecido en el script.
+Viendo los accesos a memoria por nivel, el 56.46\% de las referencias de instrucción se atienden en L1, lo que es coherente con la tasa de fallo de L1 del 1.33\%, la mayoría de los accesos a datos son resueltos por el prefetcher en L1 antes de que el procesador los solicite, apenas el 2\% combinado en L2+L3. El 35.51\% N/A en IBS son muestras que no apuntaron a ningún acceso de memoria, típicamente operaciones sobre registros o instrucciones de cómputo puro.

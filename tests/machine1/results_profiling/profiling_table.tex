@@ -3,13 +3,13 @@
 \caption{Caracterización de la implementación secuencial del autómata de tráfico ($\rho=0.50$)}
 \label{tab:profiling_seq}
 \begin{tabular}{rrrrrrrr}
-\toprule
-$N$ & $t_\mu$ (ms) & $t_\sigma$ (ms) & Mcells/s & IPC & L1 miss \% & LLC miss \% & Heap (MB) \\
-\midrule
-8,000 & 31.111 & 0.113 & 257.144 & 3.7164 & 1.33 & 0.00 & 0.061 \\
-64,000 & 249.038 & 0.441 & 256.989 & 3.7484 & 1.34 & 0.00 & 0.488 \\
-500,000 & 1953.388 & 1.720 & 255.966 & 3.7072 & 1.34 & 0.00 & 3.815 \\
-2,000,000 & 7874.508 & 28.544 & 253.984 & 3.6786 & 1.33 & 0.00 & — \\
-\bottomrule
+\hline
+$N$ & $t$ (ms) & $\sigma_t$ (ms) & Mcells/s & IPC & L1 miss & LLC miss & Heap MB \\
+\hline
+8000 & 31.234 & 0.112 & 256.131 & 3.6806 & 1.34 & 0.00 & 0.061 \\
+64000 & 250.081 & 0.671 & 255.917 & 3.7288 & 1.34 & 0.00 & 0.488 \\
+500000 & 1952.153 & 1.228 & 256.127 & 3.7073 & 1.34 & 0.00 & 3.815 \\
+2000000 & 7872.883 & 33.708 & 254.037 & 3.6761 & 1.33 & 0.00 & 15.266 \\
+\hline
 \end{tabular}
 \end{table}
