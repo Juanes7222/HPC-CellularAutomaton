@@ -1,1 +1,151 @@
-SKIPPED
+--------------------------------------------------------------------------------
+-- Metadata
+--------------------------------------------------------------------------------
+Invocation:       /usr/bin/cg_annotate tests/machine1/results_profiling/raw/N2000000/cachegrind.out
+Command:          bin/traffic_seq_perf 2000000 0.50 200000 1000
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Threshold:        0.1%
+Annotation:       on
+
+--------------------------------------------------------------------------------
+-- Summary
+--------------------------------------------------------------------------------
+Ir______________________ 
+
+513,824,194,541 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+-- File:function summary
+--------------------------------------------------------------------------------
+  Ir______________________________  file:function
+
+< 513,654,056,167 (100.0%, 100.0%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
+  375,000,078,750  (73.0%)            compute_next_generation
+  138,653,757,653  (27.0%)            count_departed_cars
+
+--------------------------------------------------------------------------------
+-- Function:file summary
+--------------------------------------------------------------------------------
+  Ir_____________________________  function:file
+
+> 375,000,078,750 (73.0%,  73.0%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+
+> 138,653,757,653 (27.0%, 100.0%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+
+--------------------------------------------------------------------------------
+-- Annotated source file: /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+--------------------------------------------------------------------------------
+Ir_____________________ 
+
+              .          #include <math.h>
+              .          #include "simulation.h"
+              .          
+              .          static void compute_next_generation(Road *road)
+         11,250  (0.0%)  {
+         11,250  (0.0%)      const int *current = road->cells;
+         11,250  (0.0%)      int       *next    = road->next_cells;
+         11,250  (0.0%)      const int  length  = road->length;
+              .          
+              .          #pragma omp parallel for schedule(static)
+ 30,000,018,750  (5.8%)      for (int i = 0; i < length; i++) {
+ 97,500,000,000 (19.0%)          int cell_behind = current[(i - 1 + length) % length];
+ 52,500,000,000 (10.2%)          int cell_here   = current[i];
+ 82,500,000,000 (16.1%)          int cell_ahead  = current[(i + 1) % length];
+              .          
+ 67,500,000,000 (13.1%)          next[i] = (cell_here & cell_ahead)
+ 45,000,000,000  (8.8%)                  | (cell_behind & ~cell_here & 1);
+              .              }
+         15,000  (0.0%)  }
+              .          
+              .          static int count_departed_cars(const Road *road)
+         11,250  (0.0%)  {
+         11,250  (0.0%)      const int *old_cells = road->cells;
+         11,250  (0.0%)      const int *new_cells = road->next_cells;
+         11,250  (0.0%)      const int  length    = road->length;
+          3,750  (0.0%)      int        departed  = 0;
+              .          
+              .          #pragma omp parallel for reduction(+:departed) schedule(static)
+ 30,000,018,750  (5.8%)      for (int i = 0; i < length; i++)
+108,653,678,903 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+              .          
+          3,750  (0.0%)      return departed;
+          7,500  (0.0%)  }
+              .          
+              .          static void swap_generation_buffers(Road *road)
+         11,250  (0.0%)  {
+         11,250  (0.0%)      int *tmp         = road->cells;
+         15,000  (0.0%)      road->cells      = road->next_cells;
+         11,250  (0.0%)      road->next_cells = tmp;
+         11,250  (0.0%)  }
+              .          
+              .          double simulation_step(Road *road)
+         15,000  (0.0%)  {
+         11,250  (0.0%)      compute_next_generation(road);
+         15,000  (0.0%)      int cars_that_moved = count_departed_cars(road);
+         11,250  (0.0%)      swap_generation_buffers(road);
+              .          
+         15,000  (0.0%)      if (road->car_count == 0) return 0.0;
+         26,250  (0.0%)      return (double)cars_that_moved / (double)road->car_count;
+          7,500  (0.0%)  }
+              .          
+              .          double simulation_measure(Road *road, int measure_steps)
+              5  (0.0%)  {
+              2  (0.0%)      double velocity_sum = 0.0;
+          4,005  (0.0%)      for (int step = 0; step < measure_steps; step++)
+          6,000  (0.0%)          velocity_sum += simulation_step(road);
+              .          
+              2  (0.0%)      if (measure_steps == 0) return 0.0;
+              4  (0.0%)      return velocity_sum / (double)measure_steps;
+              2  (0.0%)  }
+              .          
+              .          int simulation_warmup_until_steady_state(Road   *road,
+              .                                                   int     window_size,
+              .                                                   double  convergence_threshold,
+              .                                                   int     min_steps,
+              .                                                   int     max_warmup_steps)
+              8  (0.0%)  {
+              2  (0.0%)      double previous_window_mean = -1.0;  /* sentinel: no previous window yet */
+              2  (0.0%)      double current_window_sum   =  0.0;
+              1  (0.0%)      int    steps_in_window      =  0;
+              1  (0.0%)      int    total_steps_done     =  0;
+              .          
+          8,251  (0.0%)      while (total_steps_done < max_warmup_steps) {
+         13,750  (0.0%)          double velocity = simulation_step(road);
+          2,750  (0.0%)          total_steps_done++;
+          8,250  (0.0%)          current_window_sum += velocity;
+          2,750  (0.0%)          steps_in_window++;
+              .          
+         10,945  (0.0%)          if (steps_in_window < window_size) continue;
+              .          
+            275  (0.0%)          double current_window_mean = current_window_sum / (double)window_size;
+              .          
+            275  (0.0%)          int past_minimum_steps   = total_steps_done >= min_steps;
+            330  (0.0%)          int have_previous_window = previous_window_mean >= 0.0;
+              .          
+            214  (0.0%)          if (past_minimum_steps && have_previous_window) {
+            260  (0.0%)              double delta = fabs(current_window_mean - previous_window_mean);
+            157  (0.0%)              if (delta < convergence_threshold) break;
+              .                  }
+              .          
+            108  (0.0%)          previous_window_mean = current_window_mean;
+            108  (0.0%)          current_window_sum   = 0.0;
+             54  (0.0%)          steps_in_window      = 0;
+              .              }
+              .          
+              1  (0.0%)      return total_steps_done;
+              2  (0.0%)  
+
+--------------------------------------------------------------------------------
+-- Annotation summary
+--------------------------------------------------------------------------------
+Ir______________________ 
+
+513,654,056,167 (100.0%)    annotated: files known & above threshold & readable, line numbers known
+              0             annotated: files known & above threshold & readable, line numbers unknown
+              0           unannotated: files known & above threshold & two or more non-identical
+              0           unannotated: files known & above threshold & unreadable 
+     62,000,420   (0.0%)  unannotated: files known & below threshold
+    108,137,954   (0.0%)  unannotated: files unknown
+

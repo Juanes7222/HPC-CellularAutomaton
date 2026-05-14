@@ -3,59 +3,62 @@
 #
 # Total Lost Samples: 0
 #
-# Samples: 573  of event 'cpu/cycles/P'
-# Event count (approx.): 2681705135
+# Samples: 695  of event 'cpu/cycles/P'
+# Event count (approx.): 3225348745
 #
-# Overhead  Command          Shared Object      Symbol                         
-# ........  ...............  .................  ...............................
+# Overhead  Command          Shared Object         Symbol                                   
+# ........  ...............  ....................  .........................................
 #
-    79.90%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
+    69.64%  traffic_seq_per  traffic_seq_perf      [.] compute_next_generation
             |
             ---compute_next_generation
                simulation_step
                |          
-               |--49.00%--simulation_warmup_until_steady_state
+               |--44.92%--simulation_warmup_until_steady_state
                |          main
                |          0x7ffff7cb96c1
                |          __libc_start_main
                |          _start
                |          
-                --30.90%--simulation_measure
+                --24.72%--simulation_measure
                           main
                           0x7ffff7cb96c1
                           __libc_start_main
                           _start
 
-    20.08%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+    29.92%  traffic_seq_per  traffic_seq_perf      [.] count_departed_cars
             |
             ---count_departed_cars
                simulation_step
                |          
-               |--12.52%--simulation_measure
+               |--18.49%--simulation_warmup_until_steady_state
                |          main
                |          0x7ffff7cb96c1
                |          __libc_start_main
                |          _start
                |          
-                --7.56%--simulation_warmup_until_steady_state
+                --11.43%--simulation_measure
                           main
                           0x7ffff7cb96c1
                           __libc_start_main
                           _start
 
-     0.01%  traffic_seq_per  traffic_seq_perf   [.] seed_cells_randomly
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] get_mem_cgroup_from_mm
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] restore_fpregs_from_fpstate
-     0.00%  perf-exec        [kernel.kallsyms]  [k] native_write_msr
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_event_update_userpage
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] calc_timer_values
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
-     0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
-     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
-     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_ibs_handle_irq
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_write_msr
+     0.14%  traffic_seq_per  [kernel.kallsyms]     [k] srso_alias_safe_ret
+     0.14%  traffic_seq_per  [kernel.kallsyms]     [k] dma_fence_signal
+     0.14%  traffic_seq_per  [kernel.kallsyms]     [k] _raw_spin_unlock_irqrestore
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] vma_interval_tree_insert
+     0.00%  traffic_seq_per  ld-linux-x86-64.so.2  [.] 0x000000000000b961
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] visit_groups_merge.constprop.0.isra.0
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] rcu_read_unlock_special
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] irqentry_exit
+     0.00%  perf-exec        [kernel.kallsyms]     [k] perf_event_addr_filters_exec
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] perf_event_update_userpage
+     0.00%  perf-exec        [kernel.kallsyms]     [k] perf_event_update_userpage
+     0.00%  perf-exec        [kernel.kallsyms]     [k] native_sched_clock
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] native_sched_clock
+     0.00%  traffic_seq_per  [kernel.kallsyms]     [k] native_write_msr
 
 
 #
-# (Tip: Boolean options have negative forms, e.g.: perf report --no-children)
+# (Tip: To show IPC for sampling periods use perf record -e '{cycles,instructions}:S' and then browse context)
 #

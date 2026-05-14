@@ -14,25 +14,25 @@ Annotation:       on
 --------------------------------------------------------------------------------
 Ir____________________ 
 
-1,124,352,188 (100.0%)  PROGRAM TOTALS
+1,122,103,828 (100.0%)  PROGRAM TOTALS
 
 --------------------------------------------------------------------------------
 -- File:function summary
 --------------------------------------------------------------------------------
   Ir__________________________  file:function
 
-< 1,123,470,396 (99.9%, 99.9%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
-    820,043,050 (72.9%)           compute_next_generation
-    303,310,670 (27.0%)           count_departed_cars
+< 1,121,222,208 (99.9%, 99.9%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
+    820,043,050 (73.1%)           compute_next_generation
+    301,062,482 (26.8%)           count_departed_cars
 
 --------------------------------------------------------------------------------
 -- Function:file summary
 --------------------------------------------------------------------------------
   Ir________________________  function:file
 
-> 820,043,050 (72.9%, 72.9%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+> 820,043,050 (73.1%, 73.1%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
-> 303,310,670 (27.0%, 99.9%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+> 301,062,482 (26.8%, 99.9%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
 --------------------------------------------------------------------------------
 -- Annotated source file: /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
@@ -52,9 +52,9 @@ Ir_________________
  65,610,250  (5.8%)      for (int i = 0; i < length; i++) {
 213,200,000 (19.0%)          int cell_behind = current[(i - 1 + length) % length];
 114,800,000 (10.2%)          int cell_here   = current[i];
-180,400,000 (16.0%)          int cell_ahead  = current[(i + 1) % length];
+180,400,000 (16.1%)          int cell_ahead  = current[(i + 1) % length];
           .          
-147,600,000 (13.1%)          next[i] = (cell_here & cell_ahead)
+147,600,000 (13.2%)          next[i] = (cell_here & cell_ahead)
  98,400,000  (8.8%)                  | (cell_behind & ~cell_here & 1);
           .              }
       8,200  (0.0%)  }
@@ -68,7 +68,7 @@ Ir_________________
           .          
           .          #pragma omp parallel for reduction(+:departed) schedule(static)
  65,610,250  (5.8%)      for (int i = 0; i < length; i++)
-237,667,620 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+235,419,432 (21.0%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
           .          
       2,050  (0.0%)      return departed;
       4,100  (0.0%)  }
@@ -142,10 +142,10 @@ Ir_________________
 --------------------------------------------------------------------------------
 Ir___________________ 
 
-1,123,470,396 (99.9%)    annotated: files known & above threshold & readable, line numbers known
+1,121,222,208 (99.9%)    annotated: files known & above threshold & readable, line numbers known
             0            annotated: files known & above threshold & readable, line numbers unknown
             0          unannotated: files known & above threshold & two or more non-identical
             0          unannotated: files known & above threshold & unreadable 
       248,420  (0.0%)  unannotated: files known & below threshold
-      633,372  (0.1%)  unannotated: files unknown
+      633,200  (0.1%)  unannotated: files unknown
 

@@ -3,73 +3,68 @@
 #
 # Total Lost Samples: 0
 #
-# Samples: 7K of event 'cpu/cycles/P'
-# Event count (approx.): 32668173713
+# Samples: 6K of event 'cpu/cycles/P'
+# Event count (approx.): 31669197969
 #
-# Overhead  Command          Shared Object      Symbol                            
-# ........  ...............  .................  ..................................
+# Overhead  Command          Shared Object      Symbol                                  
+# ........  ...............  .................  ........................................
 #
-    73.19%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
-            |          
-             --73.17%--compute_next_generation
-                       simulation_step
-                       |          
-                       |--52.74%--simulation_warmup_until_steady_state
-                       |          main
-                       |          0x7ffff7cb96c1
-                       |          __libc_start_main
-                       |          _start
-                       |          
-                        --20.43%--simulation_measure
-                                  main
-                                  0x7ffff7cb96c1
-                                  __libc_start_main
-                                  _start
+    74.20%  traffic_seq_per  traffic_seq_perf   [.] compute_next_generation
+            |
+            ---compute_next_generation
+               simulation_step
+               |          
+               |--53.34%--simulation_warmup_until_steady_state
+               |          main
+               |          0x7ffff7cb96c1
+               |          __libc_start_main
+               |          _start
+               |          
+                --20.86%--simulation_measure
+                          main
+                          0x7ffff7cb96c1
+                          __libc_start_main
+                          _start
 
-    26.58%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
-            |          
-             --26.57%--count_departed_cars
-                       simulation_step
-                       |          
-                       |--19.16%--simulation_warmup_until_steady_state
-                       |          main
-                       |          0x7ffff7cb96c1
-                       |          __libc_start_main
-                       |          _start
-                       |          
-                        --7.40%--simulation_measure
-                                  main
-                                  0x7ffff7cb96c1
-                                  __libc_start_main
-                                  _start
+    25.63%  traffic_seq_per  traffic_seq_perf   [.] count_departed_cars
+            |
+            ---count_departed_cars
+               simulation_step
+               |          
+               |--17.81%--simulation_warmup_until_steady_state
+               |          main
+               |          0x7ffff7cb96c1
+               |          __libc_start_main
+               |          _start
+               |          
+                --7.82%--simulation_measure
+                          main
+                          0x7ffff7cb96c1
+                          __libc_start_main
+                          _start
 
-     0.03%  traffic_seq_per  [kernel.kallsyms]  [k] srso_alias_safe_ret
-     0.03%  traffic_seq_per  [kernel.kallsyms]  [k] hrtimer_interrupt
-     0.02%  traffic_seq_per  traffic_seq_perf   [.] seed_cells_randomly
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] irqentry_exit
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] update_curr
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] enqueue_hrtimer
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] timekeeping_update_from_shadow
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] __sysvec_apic_timer_interrupt
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] arch_scale_freq_tick
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] sysvec_apic_timer_interrupt
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] smp_call_function_many_cond
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] __cgroup_account_cputime_field
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] sched_clock_cpu
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] srso_alias_return_thunk
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] __irq_exit_rcu
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
+     0.01%  traffic_seq_per  traffic_seq_perf   [.] simulation_warmup_until_steady_state
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] sched_balance_trigger
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] sched_tick
      0.01%  traffic_seq_per  [kernel.kallsyms]  [k] task_tick_fair
-     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] update_cfs_group
-     0.00%  traffic_seq_per  libc.so.6          [.] random
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] memfd_check_seals_mmap
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] restore_fpregs_from_fpstate
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_ctx_enable
-     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_pmu_nop_void
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] __mem_cgroup_charge
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] tick_nohz_handler
+     0.01%  traffic_seq_per  [nvidia]           [k] 0x00000000003df880
+     0.01%  traffic_seq_per  [kernel.kallsyms]  [k] rb_erase
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] vma_interval_tree_insert
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] unmap_page_range
+     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_irq_return_iret
+     0.00%  perf-exec        [kernel.kallsyms]  [k] amd_pmu_lbr_enable_all
      0.00%  traffic_seq_per  [kernel.kallsyms]  [k] perf_event_update_userpage
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] calc_timer_values
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_write_msr
-     0.00%  perf-exec        [kernel.kallsyms]  [k] native_write_msr
-     0.00%  traffic_seq_per  [kernel.kallsyms]  [k] native_sched_clock
      0.00%  perf-exec        [kernel.kallsyms]  [k] native_sched_clock
+     0.00%  perf-exec        [kernel.kallsyms]  [k] native_write_msr
+     0.00%  perf-exec        [kernel.kallsyms]  [k] perf_event_update_userpage
 
 
 #
-# (Tip: To trace only single function with Processor Trace use perf record --filter 'filter func @ program' -e intel_pt//u ./program ; perf script --insn-trace)
+# (Tip: Profiling branch (mis)predictions with: perf record -b / perf report)
 #

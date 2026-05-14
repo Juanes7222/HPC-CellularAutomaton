@@ -14,25 +14,25 @@ Annotation:       on
 --------------------------------------------------------------------------------
 Ir______________________ 
 
-114,752,052,140 (100.0%)  PROGRAM TOTALS
+102,766,259,222 (100.0%)  PROGRAM TOTALS
 
 --------------------------------------------------------------------------------
 -- File:function summary
 --------------------------------------------------------------------------------
   Ir______________________________  file:function
 
-< 114,709,365,568 (100.0%, 100.0%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
-   83,750,070,350  (73.0%)            compute_next_generation
-   30,959,099,710  (27.0%)            count_departed_cars
+< 102,723,572,577 (100.0%, 100.0%)  /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c:
+   75,000,063,000  (73.0%)            compute_next_generation
+   27,723,335,293  (27.0%)            count_departed_cars
 
 --------------------------------------------------------------------------------
 -- Function:file summary
 --------------------------------------------------------------------------------
   Ir____________________________  function:file
 
-> 83,750,070,350 (73.0%,  73.0%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+> 75,000,063,000 (73.0%,  73.0%)  compute_next_generation:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
-> 30,959,099,710 (27.0%, 100.0%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
+> 27,723,335,293 (27.0%, 100.0%)  count_departed_cars:/home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
 
 --------------------------------------------------------------------------------
 -- Annotated source file: /home/juanes/Documents/GitHub/HPC-CellularAutomaton/src/simulation.c
@@ -43,52 +43,52 @@ Ir____________________
              .          #include "simulation.h"
              .          
              .          static void compute_next_generation(Road *road)
-        10,050  (0.0%)  {
-        10,050  (0.0%)      const int *current = road->cells;
-        10,050  (0.0%)      int       *next    = road->next_cells;
-        10,050  (0.0%)      const int  length  = road->length;
+         9,000  (0.0%)  {
+         9,000  (0.0%)      const int *current = road->cells;
+         9,000  (0.0%)      int       *next    = road->next_cells;
+         9,000  (0.0%)      const int  length  = road->length;
              .          
              .          #pragma omp parallel for schedule(static)
- 6,700,016,750  (5.8%)      for (int i = 0; i < length; i++) {
-21,775,000,000 (19.0%)          int cell_behind = current[(i - 1 + length) % length];
-11,725,000,000 (10.2%)          int cell_here   = current[i];
-18,425,000,000 (16.1%)          int cell_ahead  = current[(i + 1) % length];
+ 6,000,015,000  (5.8%)      for (int i = 0; i < length; i++) {
+19,500,000,000 (19.0%)          int cell_behind = current[(i - 1 + length) % length];
+10,500,000,000 (10.2%)          int cell_here   = current[i];
+16,500,000,000 (16.1%)          int cell_ahead  = current[(i + 1) % length];
              .          
-15,075,000,000 (13.1%)          next[i] = (cell_here & cell_ahead)
-10,050,000,000  (8.8%)                  | (cell_behind & ~cell_here & 1);
+13,500,000,000 (13.1%)          next[i] = (cell_here & cell_ahead)
+ 9,000,000,000  (8.8%)                  | (cell_behind & ~cell_here & 1);
              .              }
-        13,400  (0.0%)  }
+        12,000  (0.0%)  }
              .          
              .          static int count_departed_cars(const Road *road)
-        10,050  (0.0%)  {
-        10,050  (0.0%)      const int *old_cells = road->cells;
-        10,050  (0.0%)      const int *new_cells = road->next_cells;
-        10,050  (0.0%)      const int  length    = road->length;
-         3,350  (0.0%)      int        departed  = 0;
+         9,000  (0.0%)  {
+         9,000  (0.0%)      const int *old_cells = road->cells;
+         9,000  (0.0%)      const int *new_cells = road->next_cells;
+         9,000  (0.0%)      const int  length    = road->length;
+         3,000  (0.0%)      int        departed  = 0;
              .          
              .          #pragma omp parallel for reduction(+:departed) schedule(static)
- 6,700,016,750  (5.8%)      for (int i = 0; i < length; i++)
-24,259,029,360 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
+ 6,000,015,000  (5.8%)      for (int i = 0; i < length; i++)
+21,723,272,293 (21.1%)          departed += (old_cells[i] == 1 && new_cells[i] == 0) ? 1 : 0;
              .          
-         3,350  (0.0%)      return departed;
-         6,700  (0.0%)  }
+         3,000  (0.0%)      return departed;
+         6,000  (0.0%)  }
              .          
              .          static void swap_generation_buffers(Road *road)
-        10,050  (0.0%)  {
-        10,050  (0.0%)      int *tmp         = road->cells;
-        13,400  (0.0%)      road->cells      = road->next_cells;
-        10,050  (0.0%)      road->next_cells = tmp;
-        10,050  (0.0%)  }
+         9,000  (0.0%)  {
+         9,000  (0.0%)      int *tmp         = road->cells;
+        12,000  (0.0%)      road->cells      = road->next_cells;
+         9,000  (0.0%)      road->next_cells = tmp;
+         9,000  (0.0%)  }
              .          
              .          double simulation_step(Road *road)
-        13,400  (0.0%)  {
-        10,050  (0.0%)      compute_next_generation(road);
-        13,400  (0.0%)      int cars_that_moved = count_departed_cars(road);
-        10,050  (0.0%)      swap_generation_buffers(road);
+        12,000  (0.0%)  {
+         9,000  (0.0%)      compute_next_generation(road);
+        12,000  (0.0%)      int cars_that_moved = count_departed_cars(road);
+         9,000  (0.0%)      swap_generation_buffers(road);
              .          
-        13,400  (0.0%)      if (road->car_count == 0) return 0.0;
-        23,450  (0.0%)      return (double)cars_that_moved / (double)road->car_count;
-         6,700  (0.0%)  }
+        12,000  (0.0%)      if (road->car_count == 0) return 0.0;
+        21,000  (0.0%)      return (double)cars_that_moved / (double)road->car_count;
+         6,000  (0.0%)  }
              .          
              .          double simulation_measure(Road *road, int measure_steps)
              5  (0.0%)  {
@@ -111,27 +111,27 @@ Ir____________________
              1  (0.0%)      int    steps_in_window      =  0;
              1  (0.0%)      int    total_steps_done     =  0;
              .          
-         7,051  (0.0%)      while (total_steps_done < max_warmup_steps) {
-        11,750  (0.0%)          double velocity = simulation_step(road);
-         2,350  (0.0%)          total_steps_done++;
-         7,050  (0.0%)          current_window_sum += velocity;
-         2,350  (0.0%)          steps_in_window++;
+         6,001  (0.0%)      while (total_steps_done < max_warmup_steps) {
+        10,000  (0.0%)          double velocity = simulation_step(road);
+         2,000  (0.0%)          total_steps_done++;
+         6,000  (0.0%)          current_window_sum += velocity;
+         2,000  (0.0%)          steps_in_window++;
              .          
-         9,353  (0.0%)          if (steps_in_window < window_size) continue;
+         7,960  (0.0%)          if (steps_in_window < window_size) continue;
              .          
-           235  (0.0%)          double current_window_mean = current_window_sum / (double)window_size;
+           200  (0.0%)          double current_window_mean = current_window_sum / (double)window_size;
              .          
-           235  (0.0%)          int past_minimum_steps   = total_steps_done >= min_steps;
-           282  (0.0%)          int have_previous_window = previous_window_mean >= 0.0;
+           200  (0.0%)          int past_minimum_steps   = total_steps_done >= min_steps;
+           240  (0.0%)          int have_previous_window = previous_window_mean >= 0.0;
              .          
-           182  (0.0%)          if (past_minimum_steps && have_previous_window) {
-           220  (0.0%)              double delta = fabs(current_window_mean - previous_window_mean);
-           133  (0.0%)              if (delta < convergence_threshold) break;
+           154  (0.0%)          if (past_minimum_steps && have_previous_window) {
+           185  (0.0%)              double delta = fabs(current_window_mean - previous_window_mean);
+           112  (0.0%)              if (delta < convergence_threshold) break;
              .                  }
              .          
-            92  (0.0%)          previous_window_mean = current_window_mean;
-            92  (0.0%)          current_window_sum   = 0.0;
-            46  (0.0%)          steps_in_window      = 0;
+            78  (0.0%)          previous_window_mean = current_window_mean;
+            78  (0.0%)          current_window_sum   = 0.0;
+            39  (0.0%)          steps_in_window      = 0;
              .              }
              .          
              1  (0.0%)      return total_steps_done;
@@ -142,10 +142,10 @@ Ir____________________
 --------------------------------------------------------------------------------
 Ir______________________ 
 
-114,709,365,568 (100.0%)    annotated: files known & above threshold & readable, line numbers known
+102,723,572,577 (100.0%)    annotated: files known & above threshold & readable, line numbers known
               0             annotated: files known & above threshold & readable, line numbers unknown
               0           unannotated: files known & above threshold & two or more non-identical
               0           unannotated: files known & above threshold & unreadable 
      15,500,420   (0.0%)  unannotated: files known & below threshold
-     27,186,152   (0.0%)  unannotated: files unknown
+     27,186,225   (0.0%)  unannotated: files unknown
 

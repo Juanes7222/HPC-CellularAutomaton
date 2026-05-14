@@ -411,6 +411,33 @@ run_cachegrind() {
     rm -f "${raw_dir}/cachegrind.out"
 }
 
+run_perf_mem() {
+    local n="$1" raw_dir="$2"
+    local out="${raw_dir}/perf_mem_report.txt"
+    should_skip "${out}" && return
+
+    log_info "  perf mem record N=${n}"
+    if ! command -v perf &>/dev/null; then
+        touch "${out}"; return
+    fi
+
+    local warmup
+    warmup=$(warmup_ceiling_for "${n}")
+
+    # PEBS-based memory access sampling
+    perf mem record \
+        -o "${raw_dir}/perf_mem.data" \
+        -- "${BIN_PERF}" "${n}" "${PROFILE_DENSITY}" "${warmup}" "${MEASURE_STEPS}" \
+        > /dev/null 2>&1 || log_warn "perf mem record failed N=${n}"
+
+    # Report por tipo de acceso y nivel de memoria
+    perf mem report \
+        --stdio \
+        -i "${raw_dir}/perf_mem.data" > "${out}" 2>&1 || true
+
+    rm -f "${raw_dir}/perf_mem.data"
+}
+
 # ---------------------------------------------------------------------------
 # Assemble CSV row for one N
 # ---------------------------------------------------------------------------
@@ -429,6 +456,7 @@ profile_size() {
     run_timing_multi "${n}" "${raw_dir}" || log_warn "timing failed N=${n}"
     run_gprof        "${n}" "${raw_dir}" || log_warn "gprof failed N=${n}"
     run_perf         "${n}" "${raw_dir}" || log_warn "perf stat failed N=${n}"
+    run_perf_mem     "${n}" "${raw_dir}" || log_warn "perf mem record failed N=${n}"
     run_perf_record  "${n}" "${raw_dir}" || log_warn "perf record failed N=${n}"
     run_massif       "${n}" "${raw_dir}" || log_warn "massif failed N=${n}"
     run_cachegrind   "${n}" "${raw_dir}" || log_warn "cachegrind failed N=${n}"
