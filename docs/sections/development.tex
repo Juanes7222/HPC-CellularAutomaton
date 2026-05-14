@@ -286,8 +286,8 @@ antes de que cualquier hilo comience \texttt{count\_departed\_cars}.
 % ============================================================
 
 Para cuantificar la contribución del compilador al rendimiento, se
-construyen dos variantes adicionales — \texttt{traffic\_seq\_opt} y
-\texttt{traffic\_omp\_opt} — a partir de los \emph{mismos} archivos
+construyen dos variantes adicionales, \texttt{traffic\_seq\_opt} y
+\texttt{traffic\_omp\_opt}, a partir de los mismos archivos
 fuente que las versiones base, variando exclusivamente el conjunto de
 flags de compilación. Esta metodología garantiza que cualquier diferencia
 de rendimiento sea atribuible íntegramente al compilador y no a cambios
@@ -332,11 +332,6 @@ unidades de traducción:
           boundary de 32~bytes, evitando que el cuerpo del bucle cruce
           dos líneas de instrucciones de AVX2.
 \end{itemize}
-
-El flag \texttt{-ffast-math} se omite deliberadamente: el bucle crítico
-no usa punto flotante y su inclusión podría hacer que \texttt{avg\_velocity}
-no sea reproducible entre compiladores, complicando la validación cruzada
-del autómata.
 
 Las versiones base (\texttt{traffic\_seq}, \texttt{traffic\_omp}) se
 compilan con \texttt{-O0} para constituir una línea base sin ninguna
@@ -384,27 +379,29 @@ Tabla~\ref{tab:ws}.
 
 \begin{table}[H]
 \centering
-\caption{Working set con \texttt{int} vs \texttt{uint8\_t} para dos buffers.}
+\caption{Working set con \texttt{int} vs \texttt{uint8\_t} para dos buffers en Ryzen 5 7600X.}
 \label{tab:ws}
-\begin{tabular}{rrrrl}
+\begin{tabular}{r r r l l}
 \hline
-$N$ & \texttt{int} (bytes) & \texttt{uint8\_t} (bytes)
-    & Nivel \texttt{int} & Nivel \texttt{uint8\_t} \\
+$N$ &
+\texttt{int} (bytes) &
+\texttt{uint8\_t} (bytes) &
+Nivel \texttt{int} &
+Nivel \texttt{uint8\_t} \\
 \hline
-8\,000       & 64\,KB    & 16\,KB  & L1      & L1 \\
-64\,000      & 512\,KB   & 128\,KB & L2      & L1 \\
-500\,000     & 4\,MB     & 1\,MB   & L3      & L2/L3 \\
-2\,000\,000  & 16\,MB    & 4\,MB   & DRAM    & L3 \\
-5\,000\,000  & 40\,MB    & 10\,MB  & DRAM    & DRAM \\
-10\,000\,000 & 80\,MB    & 20\,MB  & DRAM    & DRAM \\
+8\,000       & 64\,KB   & 16\,KB  & L2          & L1 \\
+64\,000      & 512\,KB  & 128\,KB & L2          & L2 \\
+500\,000     & 4\,MB    & 1\,MB   & L3          & L2 \\
+2\,000\,000  & 16\,MB   & 4\,MB   & L3          & L3 \\
+5\,000\,000  & 40\,MB   & 10\,MB  & DRAM        & L3 \\
+10\,000\,000 & 80\,MB   & 20\,MB  & DRAM        & L3 \\
 \hline
 \end{tabular}
 \end{table}
-
 \subsubsection{MEM-2: Fusión de pasadas y eliminación del módulo}
 
 La implementación base realiza dos pasadas completas por paso de
-simulación: \texttt{compute\_next\_generation} recorre los $N$ elementos
+simulación: \newline \texttt{compute\_next\_generation} recorre los $N$ elementos
 para producir \texttt{next[]}, y \texttt{count\_departed\_cars} los
 recorre de nuevo para contar los carros desplazados. Para tamaños mayores
 que la L3, los datos escritos en la primera pasada son desalojados de caché
@@ -454,7 +451,7 @@ no requiere cambios respecto a \texttt{road\_destroy}.
 % ============================================================
 
 Las cuatro estrategias de optimización anteriores se combinan en ocho
-binarios que cubren todos los ejes del espacio de diseño:
+binarios:
 
 \begin{table}[H]
 \centering
@@ -477,31 +474,6 @@ Binario & \texttt{impl} en CSV & OMP & OPT flags & Mem opt \\
 \end{table}
 
 % ============================================================
-\subsection{Métricas de rendimiento}
-% ============================================================
-
-El script de benchmark registra el wall time $T(p)$ de la fase de
-medición para cada configuración $(N, \rho, p, \text{impl})$. A partir
-del CSV generado, las métricas de escalado fuerte se calculan como:
-
-\begin{equation}
-    S(p) = \frac{T_{\text{seq}}}{T_{\text{omp}}(p)},
-    \qquad
-    E(p) = \frac{S(p)}{p} \times 100\%.
-    \label{eq:speedup}
-\end{equation}
-
-La eficiencia $E(p)$ cuantifica la fracción de capacidad paralela
-efectivamente utilizada. Para este autómata, cuyo kernel tiene una
-intensidad aritmética de aproximadamente $0.4$~operaciones por byte de
-memoria transferida, se espera que $E(p)$ decrezca con $N$ pequeño (donde
-el overhead de creación del equipo de hilos domina) y con $N$ muy grande
-(donde el ancho de banda de memoria es el cuello de botella y agregar
-hilos no acelera la transferencia de datos). La optimización de memoria
-desplaza hacia arriba el umbral de $N$ a partir del cual la eficiencia
-paralela se degrada, al reducir el tráfico por celda en un factor de~4.
-
-% ============================================================
 \subsection{Diseño del script de pruebas}
 % ============================================================
 
@@ -516,7 +488,7 @@ capturar su salida y persistirla en un CSV.
 El harness define dos experimentos que cubren las preguntas de rendimiento
 centrales del trabajo.
 
-El \emph{experimento de escalado} mide todas las combinaciones de los seis
+El experimento de escalado mide todas las combinaciones de los seis
 valores de $N$ con los seis conteos de hilos $\{0, 2, 4, 6, 8, 12\}$ a
 densidad fija $\rho = 0.50$, para los ocho binarios descritos en la
 Tabla~\ref{tab:binarios}. El valor $p = 0$ indica los binarios secuenciales;
@@ -524,35 +496,7 @@ cualquier $p > 0$ invoca los binarios OpenMP con ese número de hilos. Los
 valores de $N$ se eligen para cubrir cada nivel de la jerarquía de
 memoria con la representación base (\texttt{int}); la
 Tabla~\ref{tab:ws} muestra cómo la representación \texttt{uint8\_t} desplaza
-el punto de operación de varios tamaños hacia niveles superiores de caché:
-
-\begin{center}
-\begin{tabular}{rrl}
-\hline
-$N$ & Working set (\texttt{int}) & Nivel esperado \\
-\hline
-8\,000       & 64\,KB  & L1 \\
-64\,000      & 512\,KB & L2 \\
-500\,000     & 4\,MB   & L3 superior \\
-2\,000\,000  & 16\,MB  & Frontera L3/DRAM \\
-5\,000\,000  & 40\,MB  & DRAM (referencia de escalado fuerte) \\
-10\,000\,000 & 80\,MB  & DRAM saturada \\
-\hline
-\end{tabular}
-\end{center}
-
-El \emph{experimento de densidad} fija $N = 20\,000\,000$ (160~MB con
-\texttt{int}; 40~MB con \texttt{uint8\_t}) y mide los hilos
-$\{0, 4, 8, 12\}$ sobre los cinco valores de densidad
-$\{0.10,\, 0.30,\, 0.50,\, 0.70,\, 0.90\}$. Este valor de $N$ es
-deliberadamente exterior al conjunto $N\_\mathrm{VALUES}$ del experimento
-de escalado para que las dos series de datos sean independientes en el
-CSV. Para los hilos secuenciales ($p = 0$) se miden las variantes
-\texttt{traffic\_seq}, \texttt{traffic\_seq\_opt} y
-\texttt{traffic\_seq\_mem\_opt}; para los hilos paralelos, únicamente
-\texttt{traffic\_omp\_mem\_opt}, que representa la configuración más
-eficiente y cuyo comportamiento ante distintas densidades es el de mayor
-interés práctico.
+el punto de operación de varios tamaños hacia niveles superiores de caché.
 
 % ============================================================
 \subsection{Techo de calentamiento adaptativo}
@@ -597,15 +541,3 @@ Columna & Descripción \\
 \hline
 \end{tabular}
 \end{center}
-
-La columna \texttt{avg\_velocity} cumple una función de diagnóstico: para
-una combinación $(N, \rho, \text{impl})$ dada, las 10 repeticiones deben
-producir valores de $\bar{v}$ con varianza inferior a $10^{-3}$ si el
-sistema alcanzó el estado estacionario antes de iniciar la medición.
-Adicionalmente, para los mismos parámetros $(N, \rho)$, todos los binarios
-deben coincidir en $\bar{v}$ independientemente del número de hilos o del
-nivel de optimización: todos implementan el mismo algoritmo determinista
-sobre la misma condición inicial (mismo \texttt{road\_length} y misma
-semilla de densidad), por lo que una discrepancia sistemática indicaría
-una condición de carrera en la versión OpenMP o una corrupción de datos
-introducida por las optimizaciones de memoria.
