@@ -1,6 +1,23 @@
 \section{Pruebas}
 
+En esta sección se presentan las pruebas realizadas para evaluar el rendimiento de los algoritmos implementados. Se llevaron a cabo experimentos tanto en modo secuencial como en modo paralelo, utilizando diferentes tamaños de entrada y distintas configuraciones de optimización con el objetivo de comparar su impacto sobre el tiempo de ejecución.
 
-%================================
-\subsection{Resultados del algoritmo secuencial}
-\label{sec:Resultados del algoritmo secuencial}
+Para la optimización por compilador se utilizó el siguiente conjunto de banderas:
+
+\begin{itemize}
+    \item \texttt{-O3}: activa el nivel máximo de optimización general del compilador, aplicando transformaciones agresivas sobre el código para mejorar el rendimiento.
+    \item \texttt{-march=native}: genera código optimizado específicamente para la arquitectura del procesador en el que se compila, aprovechando sus extensiones e instrucciones disponibles.
+    \item \texttt{-funroll-loops}: desborda los ciclos cuando es posible, reduciendo el costo de control del bucle y mejorando la ejecución en regiones críticas.
+    \item \texttt{-flto}: habilita la optimización en tiempo de enlace, permitiendo al compilador analizar y optimizar funciones y módulos completos de forma conjunta.
+    \item \texttt{-fno-semantic-interposition}: permite al compilador asumir que las llamadas internas no serán interceptadas dinámicamente, lo que facilita optimizaciones más agresivas como inlining y desvirtualización.
+    \item \texttt{-falign-loops=32}: alinea los bucles en fronteras de 32 bytes para mejorar el aprovechamiento de la caché de instrucciones y la eficiencia del flujo de ejecución.
+    \item \texttt{-fomit-frame-pointer}: elimina el puntero de marco cuando no es necesario, liberando un registro adicional y reduciendo sobrecarga en funciones simples o críticas.
+\end{itemize}
+
+\input{sections/test/secuencial.tex}
+
+\input{sections/test/omp.tex}
+
+\input{sections/test/omp_opt.tex}
+
+\input{sections/test/omp_mem.tex}
