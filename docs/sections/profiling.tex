@@ -20,14 +20,6 @@ los accesos, y cuánta memoria dinámica se consume.
 Los resultados se consolidan en un archivo CSV (\texttt{data\_profiling.csv}) que
 sirve de entrada al generador de reportes.
 
-Una particularidad del script es su operación incremental: si los archivos de
-resultados ya existen, la ejecución se omite automáticamente, y el flag
-\texttt{--force} fuerza la recolección desde cero.
-Las herramientas de Valgrind se restringen a $N \leq 500000$ dado su overhead de
-instrumentación, y para los tamaños mayores se escribe un centinela
-\texttt{SKIPPED} en los archivos correspondientes para distinguir el caso de salto
-intencional del de fallo de ejecución.
-
 
 \subsection{Binarios compilados}
 
@@ -195,7 +187,7 @@ actualización del autómata son las más costosas en términos de instrucciones
 ejecutadas.
 
 
-\subsection{Visión de conjunto y complementariedad}
+\subsection{Visión de conjunto}
 
 Las cinco técnicas de perfilado cubren dimensiones distintas del comportamiento del
 programa, y ninguna por sí sola es suficiente para construir un diagnóstico completo.
@@ -261,7 +253,7 @@ coherencia de la medición a pesar de que operan por principios distintos
 (instrumentación por compilación frente a muestreo por interrupciones de hardware).
 El 28.48\% restante corresponde a \texttt{count\_departed\_cars}, y las funciones
 de infraestructura (\texttt{simulation\_step}, \texttt{swap\_generation\_buffers},
-\texttt{allocate\_int\_array}) acumulan una fracción estadísticamente insignificante.
+\texttt{allocate\_int\_array}) acumulan una fracción insignificante.
 
 \begin{figure}[H]
    \centering
@@ -270,7 +262,7 @@ de infraestructura (\texttt{simulation\_step}, \texttt{swap\_generation\_buffers
    \label{fig:hotspots}
 \end{figure}
 
-Valgrind Cachegrind, disponible para $N \leq 500000$, refuerza este diagnóstico con
+Valgrind Cachegrind refuerza este diagnóstico con
 mayor resolución: \texttt{compute\_next\_generation} concentra el 72.9\% de las
 referencias de instrucción para $N = 8000$, el 73\% para $N = 64000$ y el 73\%
 para $N = 500000$, con una estabilidad notable entre tamaños que confirma que la
