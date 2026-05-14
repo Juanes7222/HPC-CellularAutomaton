@@ -1,24 +1,10 @@
 \section{Desarrollo de la implementación}
 
-Esta sección describe cómo se construyó el simulador de tráfico
-unidimensional con paralelismo OpenMP, explicando tanto las decisiones
-algorítmicas como las consecuencias computacionales de cada una. La
-premisa central fue mantener una única base de código para la lógica de
-simulación y variar exclusivamente el mecanismo de ejecución y el nivel
-de optimización aplicado, de forma que cualquier diferencia de rendimiento
-sea atribuible al grado de paralelismo o a la estrategia de optimización
-y no a diferencias en el algoritmo.
+Esta sección describe cómo se construyó el simulador de tráfico unidimensional con paralelismo OpenMP, explicando las decisiones de diseño y sus consecuencias en rendimiento. La idea central fue mantener una única base de código para la lógica de simulación y variar únicamente el mecanismo de ejecución y el nivel de optimización, de modo que cualquier diferencia de rendimiento sea atribuible al paralelismo o a la estrategia de compilación, y no a cambios en el algoritmo.
 
-% ============================================================
 \subsection{Modelo del autómata celular de tráfico}
-% ============================================================
 
-El sistema modela una carretera circular de $N$ celdas con condiciones
-de contorno periódicas. Cada celda $i \in \{0, 1, \ldots, N-1\}$ puede
-estar vacía ($R = 0$) o contener un carro ($R = 1$). La velocidad máxima
-es $v_{\max} = 1$, por lo que en cada paso de tiempo un carro puede
-avanzar a la celda siguiente si esta está libre, o permanecer bloqueado si
-está ocupada. La regla de actualización se define formalmente como
+El sistema modela una carretera circular de $N$ celdas. Cada celda $i \in \{0, 1, \ldots, N-1\}$ puede estar vacía ($R = 0$) o contener un carro ($R = 1$). En cada paso de tiempo, un carro avanza a la celda siguiente si está libre, o se queda donde está si está ocupada. La regla de actualización es:
 
 \begin{equation}
     R(t+1,\, i) =
@@ -28,15 +14,9 @@ está ocupada. La regla de actualización se define formalmente como
     \label{eq:regla}
 \end{equation}
 
-El primer término captura el caso en que el carro en $i$ no puede avanzar
-porque la celda siguiente está ocupada. El segundo captura el caso en que
-un carro en $i-1$ avanza a la celda $i$, que estaba libre. La
-condición $\neg R(t,i)$ en el segundo término es necesaria para evitar
-que una celda reciba dos carros simultáneamente.
+El primer término representa un carro que no puede avanzar porque la celda siguiente está ocupada. El segundo representa un carro de la celda anterior que avanza hacia una celda libre. La condición $\neg R(t,i)$ en el segundo término evita que dos carros ocupen la misma celda simultáneamente.
 
-En la implementación base, los valores booleanos se almacenan como enteros
-con signo de 32~bits (\texttt{int}). La regla~\eqref{eq:regla} se traduce
-directamente a operaciones de bit:
+En la implementación base, cada celda se almacena como un entero de 32 bits (\texttt{int}). La regla anterior se traduce directamente a operaciones de bits:
 
 \begin{equation}
     \texttt{next}[i] =
@@ -45,24 +25,13 @@ directamente a operaciones de bit:
     (\textit{behind} \;\&\; \mathtt{\sim}\textit{here} \;\&\; 1),
 \end{equation}
 
-donde \texttt{\&\,1} enmascara el complemento para suprimir la extensión
-de signo que produce \texttt{\textasciitilde} sobre enteros de 32~bits con
-signo; sin esa máscara, \texttt{\textasciitilde 0} produce
-\texttt{0xFFFFFFFF} en lugar de~1, lo que corrompería el conteo de carros.
+donde \texttt{\&\,1} garantiza que el resultado sea siempre 0 o 1, ya que el operador \texttt{\textasciitilde} sobre enteros de 32 bits con signo produce \texttt{0xFFFFFFFF} en lugar de 1, lo que corrompería el conteo de carros.
 
-Todas las lecturas de la generación $t$ provienen del arreglo
-\texttt{cells} y todas las escrituras de la generación $t+1$ van al
-arreglo \texttt{next\_cells}. Como ambos arreglos son distintos y cada
-posición $i$ de la nueva generación depende exclusivamente de posiciones
-de la generación anterior, todas las iteraciones del bucle son
-independientes entre sí y no existe ninguna dependencia de datos.
+Las lecturas del paso $t$ provienen del arreglo \texttt{cells} y las escrituras del paso $t+1$ van al arreglo \texttt{next\_cells}. Como son arreglos distintos y cada posición nueva depende únicamente de valores anteriores, todas las iteraciones del bucle son completamente independientes entre sí.
 
-% ============================================================
 \subsection{Velocidad media y estado estacionario}
-% ============================================================
 
-La velocidad media en el paso $t$ se define como la fracción de carros
-que se desplazaron:
+La velocidad media en el paso $t$ es la fracción de carros que se desplazaron:
 
 \begin{equation}
     v(t) = \frac{1}{N_c}
@@ -71,15 +40,9 @@ que se desplazaron:
     \label{eq:velocidad}
 \end{equation}
 
-donde $N_c$ es el número total de carros en la carretera, cantidad
-conservada: la regla~\eqref{eq:regla} nunca crea ni destruye carros. Esta
-conservación se verifica explícitamente en los tests de corrección.
+donde $N_c$ es el número total de carros, que se conserva: la regla~\eqref{eq:regla} nunca crea ni elimina carros. Esto se verifica explícitamente en los tests de corrección.
 
-Partiendo de una distribución inicial aleatoria, el sistema atraviesa un
-transitorio durante el cual $v(t)$ fluctúa mientras los carros se
-reorganizan. Después de suficientes pasos, $v(t)$ converge a la velocidad
-asintótica $v_\infty$, que es la cantidad de interés físico. El benchmark
-reporta el promedio sobre la fase de medición:
+Partiendo de una distribución inicial aleatoria, el sistema pasa por una fase transitoria donde $v(t)$ fluctúa mientras los carros se reorganizan. Tras suficientes pasos, $v(t)$ se estabiliza en la velocidad asintótica $v_\infty$, que es el valor de interés. El benchmark reporta el promedio sobre la fase de medición:
 
 \begin{equation}
     v_\infty \approx \bar{v} =
@@ -88,22 +51,13 @@ reporta el promedio sobre la fase de medición:
     \label{eq:vasint}
 \end{equation}
 
-donde $T_w$ es el número de pasos de calentamiento y $T_m$ es el número
-de pasos de medición.
+donde $T_w$ es el número de pasos de calentamiento y $T_m$ el número de pasos de medición.
 
-% ============================================================
 \subsection{Criterio de convergencia del calentamiento}
-% ============================================================
 
-La duración del transitorio no es fija: depende tanto de la densidad como
-de $N$. Un calentamiento con número de pasos fijo puede ser insuficiente
-para densidades cercanas al punto de transición de fase ($\rho \approx
-0.5$), donde el transitorio es máximo, o innecesariamente largo para
-densidades extremas donde el sistema converge en pocas decenas de pasos.
+La duración de la fase transitoria varía con la densidad y con $N$. Un número fijo de pasos de calentamiento puede ser insuficiente para densidades cercanas al punto de transición ($\rho \approx 0.5$), o innecesariamente largo para densidades extremas donde el sistema converge rápido.
 
-Para detectar la convergencia de forma adaptativa, se compara la velocidad
-media en dos ventanas temporales contiguas de $W$ pasos. La condición de
-parada es
+Para detectar la convergencia de forma automática, se compara la velocidad media en dos ventanas consecutivas de $W$ pasos. El calentamiento termina cuando:
 
 \begin{equation}
     \left|
@@ -113,40 +67,20 @@ parada es
     \label{eq:criterio}
 \end{equation}
 
-con $W = 50$, $\varepsilon = 10^{-4}$ y un mínimo de 200~pasos antes de
-evaluar el criterio para evitar falsos positivos durante la fase inicial.
-El parámetro \texttt{max\_warmup\_steps}, pasado como argumento al
-binario, actúa como techo; si la condición~\eqref{eq:criterio} no se
-alcanza antes de este límite, el calentamiento termina igualmente. En el
-script de benchmark este techo se fija como $\max(N / 10,\; 2000)$, valor
-que garantiza al menos una revolución completa de información alrededor de
-la carretera. El número de pasos realmente ejecutados se registra en
-\texttt{stderr} como diagnóstico, sin contaminar el \texttt{stdout} que
-leen los scripts.
+con $W = 50$, $\varepsilon = 10^{-4}$ y un mínimo de 200 pasos antes de evaluar el criterio, para evitar falsos positivos al inicio. El parámetro \texttt{max\_warmup\_steps} actúa como límite máximo; si la condición~\eqref{eq:criterio} no se cumple antes de ese límite, el calentamiento termina de todas formas. En el script de benchmark este techo se fija como $\max(N / 10,\; 2000)$, lo que garantiza al menos el tiempo suficiente para que una perturbación recorra la carretera completa. El número de pasos ejecutados se reporta en \texttt{stderr} como diagnóstico.
 
-% ============================================================
 \subsection{Arquitectura de datos}
-% ============================================================
 
-La estructura central es \texttt{Road}, que encapsula el estado completo
-de la simulación:
+La estructura central es \texttt{Road}, que contiene el estado completo de la simulación:
 
 \begin{itemize}
-    \item \texttt{cells}: puntero al estado de la generación actual, usado
-          exclusivamente para lectura dentro de un paso.
-    \item \texttt{next\_cells}: puntero al buffer de la generación
-          siguiente, usado exclusivamente para escritura.
+    \item \texttt{cells}: arreglo del estado actual, solo para lectura dentro de un paso.
+    \item \texttt{next\_cells}: arreglo del siguiente estado, solo para escritura.
     \item \texttt{length}: número de celdas $N$.
-    \item \texttt{car\_count}: número de carros $N_c$, invariante durante
-          toda la simulación.
+    \item \texttt{car\_count}: número de carros $N_c$, constante durante toda la simulación.
 \end{itemize}
 
-Ambos buffers se reservan en \texttt{road\_create} con una única llamada a
-\texttt{malloc} por buffer. No se realiza ninguna asignación de memoria
-dentro del bucle de simulación, lo que elimina el ruido del asignador
-dinámico de las mediciones de tiempo. Al finalizar cada paso, los
-punteros \texttt{cells} y \texttt{next\_cells} se intercambian mediante
-una permutación de punteros de costo $O(1)$, sin copiar datos.
+Ambos arreglos se reservan una sola vez en \texttt{road\_create} y no se realizan asignaciones de memoria dentro del bucle de simulación, lo que elimina ese ruido de las mediciones de tiempo. Al finalizar cada paso, los punteros \texttt{cells} y \texttt{next\_cells} se intercambian directamente sin copiar datos.
 
 \begin{figure}[H]
 \centering
@@ -165,38 +99,13 @@ si no: acumular $v(t)$
 \label{fig:flujo_paso}
 \end{figure}
 
-El estado inicial de \texttt{cells} se genera con \texttt{rand} en
-\texttt{road\_create}, sembrando el generador con \texttt{time(NULL)}.
-La implementación no controla la semilla explícitamente porque la magnitud
-de interés ($v_\infty$) es estadísticamente robusta respecto a la
-distribución inicial, como corroboran las varianzas de
-\texttt{avg\_velocity} entre repeticiones en el CSV de resultados.
+El estado inicial se genera con \texttt{rand} usando como semilla \texttt{time(NULL)}. No se controla la semilla explícitamente porque la velocidad asintótica $v_\infty$ es estadísticamente estable respecto a la distribución inicial, como confirman las varianzas de \texttt{avg\_velocity} entre repeticiones en el CSV de resultados.
 
-% ============================================================
 \subsection{Implementación secuencial}
-% ============================================================
 
-El binario \texttt{traffic\_seq} se compila sin el flag \texttt{-fopenmp}.
-Las directivas \texttt{\#pragma omp} presentes en \texttt{simulation.c}
-son ignoradas por el compilador conforme a ISO/IEC~9899:2011,
-sección~6.10.6, que autoriza al preprocesador a descartar cualquier pragma
-no reconocido. Como consecuencia, el binario no enlaza \texttt{libgomp},
-no crea ningún equipo de hilos en tiempo de ejecución y el bucle de
-actualización se ejecuta como un bucle \texttt{for} ordinario. Esta
-propiedad puede verificarse inspeccionando las dependencias del binario con
-\texttt{ldd bin/traffic\_seq}, que no lista \texttt{libgomp.so}.
+El binario \texttt{traffic\_seq} se compila sin \texttt{-fopenmp}. Las directivas \texttt{\#pragma omp} presentes en \texttt{simulation.c} son ignoradas por el compilador, el binario no crea hilos en tiempo de ejecución y el bucle de actualización se ejecuta de forma ordinaria. Esto puede verificarse con \texttt{ldd bin/traffic\_seq}, que no lista \texttt{libgomp.so}.
 
-La medición de tiempo utiliza
-\texttt{clock\_gettime(CLOCK\_MONOTONIC)} de \texttt{time.h}, accesible
-bajo \texttt{\_POSIX\_C\_SOURCE=200809L} con \texttt{-std=c11}. Esta macro
-de prueba de características se define en \texttt{CFLAGS} del
-\texttt{Makefile} en lugar de en los encabezados, siguiendo la práctica
-estándar de que las macros de prueba pertenecen al entorno de compilación
-y no al código fuente. El reloj \texttt{CLOCK\_MONOTONIC} es inmune a
-ajustes del reloj del sistema (\textsc{ntp}, \texttt{adjtime}) y garantiza
-mediciones de tiempo transcurrido fiables. El cronómetro se activa
-inmediatamente antes de la fase de medición y se detiene al finalizar,
-excluyendo el calentamiento del tiempo reportado.
+La medición de tiempo usa \texttt{clock\_gettime(CLOCK\_MONOTONIC)}, un reloj que no se ve afectado por ajustes del sistema como NTP y garantiza mediciones fiables del tiempo transcurrido. El cronómetro se activa justo antes de la fase de medición y se detiene al terminar, dejando el calentamiento fuera del tiempo reportado.
 
 La interfaz de línea de comandos es:
 
@@ -204,39 +113,21 @@ La interfaz de línea de comandos es:
 \texttt{traffic\_seq} $N$ $\rho$ \texttt{max\_warmup} $T_m$
 \end{center}
 
-La salida estándar contiene exclusivamente dos valores en una sola línea:
-el tiempo de pared en milisegundos y la velocidad media $\bar{v}$,
-separados por un espacio. Esta separación entre tiempo y velocidad permite
-al script de benchmark detectar automáticamente ejecuciones que no
-alcanzaron el estado estacionario: si $\bar{v}$ presenta alta varianza
-entre repeticiones de los mismos parámetros, el techo de calentamiento fue
-insuficiente.
+La salida contiene exclusivamente dos valores: el tiempo en milisegundos y la velocidad media $\bar{v}$. Esta separación permite al script de benchmark detectar ejecuciones que no alcanzaron el estado estacionario: una alta varianza en $\bar{v}$ entre repeticiones indica que el techo de calentamiento fue insuficiente.
 
-% ============================================================
 \subsection{Implementación paralela con OpenMP}
-% ============================================================
 
-El binario \texttt{traffic\_omp} se compila con \texttt{-fopenmp}, que
-activa el preprocesador de pragmas OpenMP, define la macro
-\texttt{\_OPENMP} y enlaza \texttt{libgomp}. El número de hilos no se fija
-en tiempo de compilación sino que se lee como argumento de línea de
-comandos y se comunica al runtime mediante \texttt{omp\_set\_num\_threads},
-declarada en \texttt{omp.h}. Esto permite que un único binario sirva para
-todos los experimentos de escalado fuerte sin necesidad de recompilación.
+El binario \texttt{traffic\_omp} se compila con \texttt{-fopenmp}. El número de hilos se lee como argumento de línea de comandos y se comunica al runtime con \texttt{omp\_set\_num\_threads}, lo que permite usar un único binario para todos los experimentos sin recompilar.
 
-La interfaz amplía la del binario secuencial con un argumento adicional:
+La interfaz extiende la del binario secuencial con un argumento adicional:
 
 \begin{center}
 \texttt{traffic\_omp} $N$ $\rho$ \texttt{max\_warmup} $T_m$ $p$
 \end{center}
 
-donde $p$ es el número de hilos solicitado. El valor efectivo se confirma
-con \texttt{omp\_get\_max\_threads()} y se registra en \texttt{stderr}.
+donde $p$ es el número de hilos. El valor efectivo se confirma con \texttt{omp\_get\_max\_threads()} y se registra en \texttt{stderr}.
 
-Dentro de \texttt{simulation.c} existen dos regiones paralelas
-independientes por paso de tiempo. La primera, en
-\texttt{compute\_next\_generation}, aplica la regla~\eqref{eq:regla} a
-cada celda:
+Por paso de tiempo hay dos regiones paralelas. La primera, en \texttt{compute\_next\_generation}, aplica la regla~\eqref{eq:regla} a cada celda:
 
 \begin{center}
 \begin{verbatim}
@@ -245,24 +136,11 @@ for (int i = 0; i < length; i++) { ... }
 \end{verbatim}
 \end{center}
 
-La cláusula \texttt{schedule(static)} asigna bloques contiguos de celdas
-a cada hilo con partición determinista en tiempo de compilación. Esta
-elección es apropiada porque el trabajo por celda es uniforme: la
-regla~\eqref{eq:regla} implica exactamente tres lecturas, dos operaciones
-lógicas y una escritura para cada posición, independientemente del estado
-de la celda. Con trabajo uniforme, \texttt{schedule(static)} tiene menor
-overhead de planificación que \texttt{dynamic} o \texttt{guided}, y
-produce un patrón de acceso a memoria favorable para el prefetcher al
-asignar rangos contiguos a cada hilo.
+La cláusula \texttt{schedule(static)} divide las celdas en bloques contiguos de tamaño fijo, uno por hilo. Esto es adecuado porque el trabajo por celda es uniforme, exactamente tres lecturas, dos operaciones lógicas y una escritura, y produce un patrón de acceso a memoria favorable para el procesador.
 
-La independencia de las iteraciones es estructural: todas las lecturas
-provienen de \texttt{current[]} y todas las escrituras van a
-\texttt{next[]}, que son punteros a arreglos distintos. No existe ninguna
-dependencia de datos entre iteraciones, lo que garantiza ausencia de
-condiciones de carrera sin necesidad de secciones críticas.
+La independencia entre iteraciones es completa: todas las lecturas vienen de \texttt{current[]} y todas las escrituras van a \texttt{next[]}, que son arreglos distintos. No hay condiciones de carrera.
 
-La segunda región paralela, en \texttt{count\_departed\_cars}, cuenta los
-carros que se desplazaron para calcular $v(t)$:
+La segunda región paralela, en \texttt{count\_departed\_cars}, cuenta los carros desplazados:
 
 \begin{center}
 \begin{verbatim}
@@ -272,98 +150,47 @@ for (int i = 0; i < length; i++)
 \end{verbatim}
 \end{center}
 
-La cláusula \texttt{reduction(+:departed)} instruye a OpenMP a mantener
-una copia privada del acumulador en cada hilo y combinarlas con suma al
-finalizar la región paralela. Sin esta cláusula, los incrementos
-concurrentes sobre una variable compartida constituirían una condición de
-carrera. Entre las dos regiones paralelas no se requiere sincronización
-explícita: la barrera implícita al final de la primera directiva garantiza
-que todos los hilos han completado sus escrituras en \texttt{next\_cells}
-antes de que cualquier hilo comience \texttt{count\_departed\_cars}.
+La cláusula \texttt{reduction(+:departed)} hace que cada hilo lleve su propio contador local y los sume al final, evitando que los hilos se pisen entre sí. Entre las dos regiones paralelas no se necesita sincronización adicional: OpenMP garantiza automáticamente que todos los hilos terminaron la primera región antes de que cualquiera comience la segunda.
 
-% ============================================================
 \subsection{Optimización por compilador}
-% ============================================================
 
-Para cuantificar la contribución del compilador al rendimiento, se
-construyen dos variantes adicionales, \texttt{traffic\_seq\_opt} y
-\texttt{traffic\_omp\_opt}, a partir de los mismos archivos
-fuente que las versiones base, variando exclusivamente el conjunto de
-flags de compilación. Esta metodología garantiza que cualquier diferencia
-de rendimiento sea atribuible íntegramente al compilador y no a cambios
-algorítmicos.
+Para cuantificar el efecto del compilador, se construyen dos variantes adicionales, \texttt{traffic\_seq\_opt} y \texttt{traffic\_omp\_opt}, a partir de los mismos archivos fuente, variando únicamente los flags de compilación.
 
-El conjunto de flags optimizadas se seleccionó específicamente para el
-perfil de este kernel. El loop crítico de \texttt{compute\_next\_generation}
-realiza tres cargas de memoria, dos operaciones bitwise y una escritura por
-celda, lo que produce una intensidad aritmética de aproximadamente $0.4$
-operaciones por byte de memoria transferida. Con este perfil predominantemente
-\emph{memory-bound}, las flags con mayor impacto son las que amplían el
-ancho de los vectores SIMD y reducen el overhead de llamada entre
-unidades de traducción:
+El bucle principal realiza tres cargas de memoria, dos operaciones lógicas y una escritura por celda, lo que lo convierte en un kernel limitado principalmente por el ancho de banda de memoria. Las flags seleccionadas actúan sobre este perfil:
 
 \begin{itemize}
-    \item \texttt{-O3}: habilita vectorización automática
-          (\texttt{-ftree-vectorize}), transformaciones de bucle e
-          inlining agresivo.
+    \item \texttt{-O3}: activa vectorización automática, transformaciones de bucle e inlining agresivo.
 
-    \item \texttt{-march=native}: emite instrucciones AVX2 (256~bits) o
-          AVX-512 (512~bits) según el procesador donde se compila.
-          Con datos \texttt{int} de 32~bits, un registro AVX2 procesa 8
-          celdas por instrucción; con \texttt{uint8\_t} (variante de
-          optimización de memoria, descrita más adelante), procesa~32.
+    \item \texttt{-march=native}: emite instrucciones AVX2 o AVX-512 según el procesador. Con datos \texttt{int} de 32 bits, un registro AVX2 procesa 8 celdas a la vez; con \texttt{uint8\_t} procesa 32.
 
-    \item \texttt{-funroll-loops}: reduce el overhead del contador del
-          bucle; beneficia especialmente los tamaños L1-bound ($N \leq
-          64\,000$).
+    \item \texttt{-funroll-loops}: reduce el overhead del contador del bucle; más útil cuando los datos caben en L1 ($N \leq 64\,000$).
 
-    \item \texttt{-flto} con \texttt{-fno-semantic-interposition}:
-          Link-Time Optimization permite al compilador inlinar
-          \texttt{compute\_next\_generation} y
-          \texttt{count\_departed\_cars} directamente en
-          \texttt{simulation\_step}, eliminando el overhead de llamada
-          en cada uno de los $T_m = 1000$ pasos por medición. Sin
-          \texttt{-fno-semantic-interposition}, GCC emite llamadas
-          indirectas a funciones externas para soportar
-          \texttt{LD\_PRELOAD}, lo que impide el inlining entre unidades
-          de traducción.
+    \item \texttt{-flto} con \texttt{-fno-semantic-interposition}: permite al compilador fusionar e inlinar funciones entre archivos fuente distintos, eliminando el costo de llamada en cada uno de los $T_m = 1000$ pasos de medición.
 
-    \item \texttt{-falign-loops=32}: alinea el inicio de cada bucle a un
-          boundary de 32~bytes, evitando que el cuerpo del bucle cruce
-          dos líneas de instrucciones de AVX2.
+    \item \texttt{-falign-loops=32}: alinea el inicio de cada bucle a 32 bytes, evitando que las instrucciones AVX2 crucen fronteras de línea de caché.
 \end{itemize}
 
-Las versiones base (\texttt{traffic\_seq}, \texttt{traffic\_omp}) se
-compilan con \texttt{-O0} para constituir una línea base sin ninguna
-optimización, lo que permite aislar el efecto del compilador con máxima
-claridad.
+Las versiones base se compilan con \texttt{-O0} para servir como línea de referencia sin ninguna optimización.
 
-% ============================================================
 \subsection{Optimización de memoria}
-% ============================================================
 
-El análisis de profiling reveló que el cuello de botella del kernel no es
-la lógica de cómputo, el IPC medido es de aproximadamente $3.7$, cercano
-al límite teórico del superescalar de 4~vías, sino el ancho de banda de
-memoria. La causa estructural es el tipo de dato: cada celda ocupa
-\texttt{sizeof(int) = 4}~bytes pero almacena únicamente los valores $0$ o
-$1$, dejando 3~bytes sin utilizar por cada celda. Una línea de caché de
-64~bytes transporta 16~celdas con la representación \texttt{int}, cuando
-podría transportar 64~con representación \texttt{uint8\_t}. Para
-$N = 2\,000\,000$, el working set con \texttt{int} es de 16~MB y
-desborda la L3; con \texttt{uint8\_t} se reduce a 4~MB, que cabe
-completamente en caché.
+El profiling reveló que el cuello de botella de la implementación base es la cantidad de
+instrucciones escalares. El IPC medido es aproximadamente 3.7, cercano al límite del
+procesador, lo que indica que el CPU ejecuta instrucciones eficientemente sin esperar por
+datos: el prefetcher secuencial anticipa los accesos y los resuelve mayoritariamente en L1,
+como confirma el perfil de \texttt{perf mem} con una tasa de aciertos en L1 superior al
+56\%. El problema no es que falten datos, sino que cada instrucción hace muy poco trabajo
+útil: con celdas de tipo \texttt{int} de 32 bits, un registro AVX2 de 256 bits contiene
+solo 8 celdas, y el compilador no puede vectorizar eficientemente un bucle cuya lógica
+opera sobre enteros de ese ancho cuando la semántica real es binaria.
 
-Para cuantificar este efecto se implementaron dos variantes adicionales,
-\texttt{traffic\_seq\_mem} y \texttt{traffic\_omp\_mem\_opt}, que
-aplican las siguientes tres optimizaciones de forma conjunta.
+Para explotar esta oportunidad se implementaron \texttt{traffic\_seq\_mem} y
+\texttt{traffic\_omp\_mem}, que aplican tres optimizaciones de forma conjunta.
 
 \subsubsection{MEM-1: Reducción del tipo de celda a \texttt{uint8\_t}}
 
-La estructura \texttt{RoadOpt} reemplaza los punteros \texttt{int~*} por
-\texttt{uint8\_t~*}. La regla~\eqref{eq:regla} en código de bits se
-preserva sin cambios lógicos, pero se añade un cast explícito al
-complemento:
+La estructura \texttt{RoadOpt} usa \texttt{uint8\_t~*} en lugar de \texttt{int~*}.
+La lógica es idéntica pero se agrega un cast explícito en el complemento:
 
 \begin{equation}
     \texttt{next}[i] =
@@ -371,11 +198,12 @@ complemento:
     (b \;\&\; \mathtt{(uint8\_t)(\sim h)} \;\&\; \mathtt{1u}),
 \end{equation}
 
-donde el cast \texttt{(uint8\_t)} evita que la extensión de signo de
-\texttt{\textasciitilde h} sobre 32~bits corrompa el resultado al volver a
-asignarlo en un campo de 8~bits. El working set se reduce en un factor de
-4, con el impacto sobre la jerarquía de caché descrito en la
-Tabla~\ref{tab:ws}.
+para evitar que la extensión de signo corrompa el resultado al escribir en un campo de
+8 bits. El efecto inmediato es que un registro AVX2 de 256 bits pasa a contener 32 celdas
+en lugar de 8, cuadruplicando el trabajo útil por instrucción SIMD. Como consecuencia
+secundaria, el working set se reduce por un factor de 4, lo que beneficia los tamaños
+de problema donde los datos con \texttt{int} superaban la capacidad de L3, como se
+resume en la Tabla~\ref{tab:ws}.
 
 \begin{table}[H]
 \centering
@@ -389,29 +217,30 @@ $N$ &
 Nivel \texttt{int} &
 Nivel \texttt{uint8\_t} \\
 \hline
-8\,000       & 64\,KB   & 16\,KB  & L2          & L1 \\
-64\,000      & 512\,KB  & 128\,KB & L2          & L2 \\
-500\,000     & 4\,MB    & 1\,MB   & L3          & L2 \\
-2\,000\,000  & 16\,MB   & 4\,MB   & L3          & L3 \\
-5\,000\,000  & 40\,MB   & 10\,MB  & DRAM        & L3 \\
-10\,000\,000 & 80\,MB   & 20\,MB  & DRAM        & L3 \\
+8\,000       & 64\,KB   & 16\,KB  & L2   & L1 \\
+64\,000      & 512\,KB  & 128\,KB & L2   & L2 \\
+500\,000     & 4\,MB    & 1\,MB   & L3   & L2 \\
+2\,000\,000  & 16\,MB   & 4\,MB   & L3   & L3 \\
+5\,000\,000  & 40\,MB   & 10\,MB  & DRAM & L3 \\
+10\,000\,000 & 80\,MB   & 20\,MB  & DRAM & L3 \\
 \hline
 \end{tabular}
 \end{table}
+
+Para los tamaños donde ambas representaciones residen en L3 o superiores, la ganancia
+proviene casi exclusivamente de la densidad SIMD. Para $N \geq 5\,000\,000$, donde
+\texttt{int} desborda L3 hacia DRAM, la reducción del working set aporta un factor
+adicional al eliminar accesos a memoria principal.
+
 \subsubsection{MEM-2: Fusión de pasadas y eliminación del módulo}
 
-La implementación base realiza dos pasadas completas por paso de
-simulación: \newline \texttt{compute\_next\_generation} recorre los $N$ elementos
-para producir \texttt{next[]}, y \texttt{count\_departed\_cars} los
-recorre de nuevo para contar los carros desplazados. Para tamaños mayores
-que la L3, los datos escritos en la primera pasada son desalojados de caché
-antes de que comience la segunda, duplicando el tráfico hacia DRAM. La
-fusión de ambas pasadas en \texttt{compute\_next\_and\_count} lee y escribe
-cada celda una sola vez por paso:
+La implementación base recorre el arreglo dos veces por paso: una para calcular el
+siguiente estado y otra para contar los carros desplazados. La solución es fusionar
+ambas pasadas en una sola función \texttt{compute\_next\_and\_count}, que lee y escribe
+cada celda una sola vez, reduciendo a la mitad el número de recorridos sobre los datos:
 
 \begin{center}
 \begin{verbatim}
-/* bucle interno — sin módulo, vectorizable */
 #pragma omp parallel for schedule(static) reduction(+:departed)
 for (int i = 1; i < length - 1; i++) {
     uint8_t b = current[i - 1];
@@ -424,34 +253,23 @@ for (int i = 1; i < length - 1; i++) {
 \end{verbatim}
 \end{center}
 
-Las celdas frontera ($i = 0$ e $i = N-1$), que requieren índices con
-módulo, se calculan secuencialmente fuera de la región paralela antes y
-después del bucle interno. Esta técnica de \emph{boundary peeling} elimina
-el operador módulo, que implica una división entera implícita, del camino
-crítico y deja el bucle interno con índices $i{-}1$, $i$ e $i{+}1$
-directos, lo que permite al vectorizador automático emitir cargas e
-instrucciones AVX2 sin bifurcaciones de índice.
+Las celdas de los extremos ($i = 0$ e $i = N-1$), que requieren índices circulares, se
+calculan fuera del bucle paralelo. Esto elimina el operador módulo del camino crítico y
+deja el bucle interno libre de bifurcaciones adicionales, condición necesaria para que
+el compilador pueda vectorizarlo con instrucciones AVX2.
 
 \subsubsection{MEM-3: Alineación de buffers a línea de caché}
 
-Los buffers se reservan con \texttt{posix\_memalign(64, \ldots)} en lugar
-de \texttt{malloc}. Esto garantiza que el primer byte de cada arreglo
-coincida con el inicio de una cacheline de 64~bytes, con dos efectos:
-primero, los accesos del primer y último hilo OMP al extremo de su rango
-asignado no producen \emph{false sharing} con la línea de caché inicial o
-final del buffer; segundo, el hardware stream prefetcher inicia el
-seguimiento del patrón de acceso desde una dirección base alineada, lo
-que reduce la latencia de la primera línea traída del siguiente nivel de
-la jerarquía. La memoria devuelta por \texttt{posix\_memalign} es
-compatible con \texttt{free}, por lo que \texttt{road\_mem\_opt\_destroy}
-no requiere cambios respecto a \texttt{road\_destroy}.
+Los arreglos se reservan con \texttt{posix\_memalign(64, \ldots)} en lugar de
+\texttt{malloc}, garantizando que el inicio de cada arreglo coincida con el inicio de
+una cacheline de 64 bytes. Esto tiene dos efectos: los accesos en los extremos del
+rango de cada hilo no afectan la línea de caché de otro hilo, evitando false sharing, y
+el prefetcher puede anticipar los accesos más eficientemente desde una dirección base
+alineada.
 
-% ============================================================
 \subsection{Matriz de variantes de compilación}
-% ============================================================
 
-Las cuatro estrategias de optimización anteriores se combinan en ocho
-binarios:
+Las cuatro estrategias anteriores producen ocho binarios:
 
 \begin{table}[H]
 \centering
@@ -461,68 +279,40 @@ binarios:
 \hline
 Binario & \texttt{impl} en CSV & OMP & OPT flags & Mem opt \\
 \hline
-\texttt{traffic\_seq}         & \texttt{traffic\_seq}         & No  & No  & No \\
-\texttt{traffic\_seq\_opt}    & \texttt{traffic\_seq\_opt}    & No  & Sí  & No \\
-\texttt{traffic\_omp}         & \texttt{traffic\_omp}         & Sí  & No  & No \\
-\texttt{traffic\_omp\_opt}    & \texttt{traffic\_omp\_opt}    & Sí  & Sí  & No \\
-\texttt{traffic\_seq\_mem}    & \texttt{traffic\_seq\_mem}    & No  & No  & Sí \\
-\texttt{traffic\_seq\_mem\_opt} & \texttt{traffic\_seq\_mem\_opt} & No & Sí & Sí \\
-\texttt{traffic\_omp\_mem}    & \texttt{traffic\_omp\_mem}    & Sí  & No  & Sí \\
-\texttt{traffic\_omp\_mem\_opt} & \texttt{traffic\_omp\_mem\_opt} & Sí & Sí & Sí \\
+\texttt{traffic\_seq}           & \texttt{traffic\_seq}           & No  & No  & No \\
+\texttt{traffic\_seq\_opt}      & \texttt{traffic\_seq\_opt}      & No  & Sí  & No \\
+\texttt{traffic\_omp}           & \texttt{traffic\_omp}           & Sí  & No  & No \\
+\texttt{traffic\_omp\_opt}      & \texttt{traffic\_omp\_opt}      & Sí  & Sí  & No \\
+\texttt{traffic\_seq\_mem}      & \texttt{traffic\_seq\_mem}      & No  & No  & Sí \\
+\texttt{traffic\_seq\_mem\_opt} & \texttt{traffic\_seq\_mem\_opt} & No  & Sí  & Sí \\
+\texttt{traffic\_omp\_mem}      & \texttt{traffic\_omp\_mem}      & Sí  & No  & Sí \\
+\texttt{traffic\_omp\_mem\_opt} & \texttt{traffic\_omp\_mem\_opt} & Sí  & Sí  & Sí \\
 \hline
 \end{tabular}
 \end{table}
 
-% ============================================================
 \subsection{Diseño del script de pruebas}
-% ============================================================
 
-El script \texttt{bench\_traffic.sh} actúa como harness de medición: su
-única responsabilidad es invocar los binarios con los parámetros correctos,
-capturar su salida y persistirla en un CSV. 
+El script \texttt{bench\_traffic.sh} actúa como harness de medición: su única responsabilidad es invocar los binarios con los parámetros correctos, capturar su salida y guardarla en un CSV.
 
-% ============================================================
 \subsection{Matriz de configuraciones}
-% ============================================================
 
-El harness define dos experimentos que cubren las preguntas de rendimiento
-centrales del trabajo.
+El harness define dos experimentos que cubren las preguntas de rendimiento centrales del trabajo.
 
-El experimento de escalado mide todas las combinaciones de los seis
-valores de $N$ con los seis conteos de hilos $\{0, 2, 4, 6, 8, 12\}$ a
-densidad fija $\rho = 0.50$, para los ocho binarios descritos en la
-Tabla~\ref{tab:binarios}. El valor $p = 0$ indica los binarios secuenciales;
-cualquier $p > 0$ invoca los binarios OpenMP con ese número de hilos. Los
-valores de $N$ se eligen para cubrir cada nivel de la jerarquía de
-memoria con la representación base (\texttt{int}); la
-Tabla~\ref{tab:ws} muestra cómo la representación \texttt{uint8\_t} desplaza
-el punto de operación de varios tamaños hacia niveles superiores de caché.
+El experimento de escalado mide todas las combinaciones de los seis valores de $N$ con los seis conteos de hilos $\{0, 2, 4, 6, 8, 12\}$ a densidad fija $\rho = 0.50$, para los ocho binarios de la Tabla~\ref{tab:binarios}. El valor $p = 0$ indica los binarios secuenciales; cualquier $p > 0$ invoca los binarios OpenMP con ese número de hilos. Los valores de $N$ cubren cada nivel de la jerarquía de memoria con la representación base; la Tabla~\ref{tab:ws} muestra cómo \texttt{uint8\_t} desplaza varios tamaños hacia niveles superiores de caché.
 
-% ============================================================
 \subsection{Techo de calentamiento adaptativo}
-% ============================================================
 
-El techo de pasos de calentamiento que el harness pasa a cada binario se
-calcula como
+El techo de pasos de calentamiento que el harness pasa a cada binario se calcula como:
 
 \begin{equation}
     T_{w,\max} = \max\!\left(\frac{N}{10},\; 2000\right).
     \label{eq:techo}
 \end{equation}
 
-El factor $N/10$ garantiza que el techo sea al menos proporcional al
-tiempo que tarda una perturbación en recorrer la carretera completa, del
-orden de $N$ pasos, con un margen de seguridad de un orden de magnitud.
-El piso de 2000 evita techos irrazonablemente bajos para $N$ pequeños.
-El binario puede terminar el calentamiento antes de alcanzar este techo si
-el criterio~\eqref{eq:criterio} se satisface, lo que ocurre en la
-práctica para densidades extremas ($\rho \leq 0.1$ o $\rho \geq 0.9$) en
-pocas centenas de pasos.
+El factor $N/10$ garantiza que el techo sea proporcional al tiempo que tarda una perturbación en recorrer la carretera, con un margen de seguridad de un orden de magnitud. El piso de 2000 evita techos demasiado bajos para valores pequeños de $N$. El binario puede terminar antes si el criterio~\eqref{eq:criterio} se cumple, lo que ocurre en la práctica para densidades extremas ($\rho \leq 0.1$ o $\rho \geq 0.9$) en pocas centenas de pasos.
 
-
-% ============================================================
 \subsection{Formato del CSV de resultados}
-% ============================================================
 
 El archivo \texttt{data.csv} tiene siete columnas:
 
@@ -531,13 +321,14 @@ El archivo \texttt{data.csv} tiene siete columnas:
 \hline
 Columna & Descripción \\
 \hline
-\texttt{impl}          & Binario usado (véase Tabla~\ref{tab:binarios}) \\
-\texttt{threads}       & Número de hilos (0 para variantes secuenciales) \\
-\texttt{road\_length}  & Tamaño de la carretera $N$ \\
-\texttt{density}       & Densidad inicial de carros $\rho$ \\
-\texttt{repetition}    & Índice de repetición (1 a 10) \\
-\texttt{wall\_time\_ms} & Tiempo de pared de la fase de medición en ms \\
-\texttt{avg\_velocity} & Velocidad media $\bar{v}$ sobre los $T_m$ pasos \\
+\texttt{impl}           & Binario usado (véase Tabla~\ref{tab:binarios}) \\
+\texttt{threads}        & Número de hilos (0 para variantes secuenciales) \\
+\texttt{road\_length}   & Tamaño de la carretera $N$ \\
+\texttt{density}        & Densidad inicial de carros $\rho$ \\
+\texttt{repetition}     & Índice de repetición (1 a 10) \\
+\texttt{wall\_time\_ms} & Tiempo de la fase de medición en ms \\
+\texttt{avg\_velocity}  & Velocidad media $\bar{v}$ sobre los $T_m$ pasos \\
 \hline
 \end{tabular}
 \end{center}
+
