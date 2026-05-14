@@ -6,15 +6,42 @@
 
 \begin{enumerate}
    \item
-El resultado más importante del experimento es que la implementación secuencial optimizada tanto en memoria como por el compilador alcanza un speedup cercano a 65x frente a la implementación secuencial base, y lo hace de manera muy estable para todos los tamaños del problema. Para un caso representativo de $N=10$ millones, el tiempo de ejecución se reduce de 29,608 ms a solo 453 ms usando un único hilo, lo cual evidencia que una buena optimización puede ser más efectiva que aumentar el paralelismo.
+El resultado más importante del experimento es que la implementación secuencial optimizada
+tanto en memoria como por el compilador alcanza un speedup cercano a 65x frente a la
+implementación secuencial base, y lo hace de manera muy estable para todos los tamaños del
+problema. Para un caso representativo de $N=10$ millones, el tiempo de ejecución se reduce
+de 29{,}608~ms a solo 453~ms usando un único hilo, lo cual evidencia que una buena
+optimización puede ser más efectiva que aumentar el paralelismo.
 
-Lo más interesante de este resultado es que ninguna de las dos optimizaciones funciona bien por sí sola. Cuando solo se aplica la optimización del compilador, la mejora es pequeña, alrededor de 1.09 veces. Cuando solo se aplica la optimización de memoria, el rendimiento incluso empeora ligeramente frente a la versión base. Esto ocurre porque cada optimización ataca un problema distinto, pero ninguna es suficiente por sí sola.
+Lo más interesante de este resultado es que ninguna de las dos optimizaciones funciona bien
+por sí sola. Cuando solo se aplica la optimización del compilador, la mejora es pequeña,
+alrededor de 1.09 veces. Cuando solo se aplica la optimización de memoria, el rendimiento
+incluso empeora ligeramente frente a la versión base. Esto ocurre porque cada optimización
+ataca un problema distinto, pero ninguna es suficiente por sí sola.
 
-En el caso de la optimización del compilador aplicada sobre la versión base, cada celda del autómata se almacena como un entero de 32 bits (\texttt{int}), por lo que para $N=10$ millones los dos buffers del autómata ocupan aproximadamente 80 MB en total. Aunque el compilador puede acelerar parcialmente el bucle, sigue siendo necesario leer grandes cantidades de datos desde memoria principal, lo que rápidamente se convierte en el principal factor limitante y reduce el impacto de la optimización.
+En el caso de la optimización del compilador aplicada sobre la versión base, cada celda del
+autómata se almacena como un entero de 32 bits (\texttt{int}). Aunque el compilador puede
+acelerar parcialmente el bucle, un registro AVX2 de 256 bits solo puede contener 8 enteros,
+por lo que cada instrucción SIMD procesa apenas 8 celdas en paralelo. El potencial de
+vectorización queda así muy limitado por la anchura del tipo de dato.
 
-Por otro lado, la optimización de memoria reduce el tamaño de cada celda de 4 bytes a 1 byte (\texttt{uint8\_t}), aprovechando que cada celda solo puede valer 0 o 1. Esto reduce el conjunto de datos de aproximadamente 80 MB a 20 MB, y además fusiona los dos pases del algoritmo en uno solo, reduciendo a la mitad el número de recorridos sobre los datos. Sin embargo, si el compilador no optimiza el código, el trabajo adicional necesario para gestionar esta representación termina siendo más costoso que simplemente trabajar con enteros, lo que explica por qué esta versión no mejora el rendimiento por sí sola.
+Por otro lado, la optimización de memoria reduce el tamaño de cada celda de 4 bytes a 1
+byte (\texttt{uint8\_t}), aprovechando que cada celda solo puede valer 0 o 1, y además
+fusiona los dos pases del algoritmo en uno solo. Sin embargo, si el compilador no optimiza
+el código, la lógica adicional necesaria para este pase único resulta más costosa que el
+enfoque base con dos buffers simples, lo que explica por qué esta versión no mejora el
+rendimiento por sí sola.
 
-La gran ganancia aparece cuando ambas optimizaciones se combinan. En ese caso, el compilador puede vectorizar el bucle interno y procesar múltiples celdas \texttt{uint8\_t} en una sola instrucción SIMD, en lugar de operar celda por celda. Esto permite que una sola instrucción calcule decenas de celdas al mismo tiempo de forma muy eficiente. Además, como los datos ocupan mucho menos espacio y se recorren en un único pase, encajan mejor en la caché del procesador y se reducen significativamente los accesos a memoria principal. El efecto combinado de estos dos factores explica de forma clara el gran speedup observado. 
+La gran ganancia aparece cuando ambas optimizaciones se combinan. Con celdas de tipo
+\texttt{uint8\_t}, un registro AVX2 de 256 bits contiene 32 celdas en lugar de 8, lo que
+cuadruplica el número de celdas procesadas por instrucción SIMD. Sumado al factor de 2x
+que aporta la fusión en un único pase, el efecto combinado sobre el rendimiento
+computacional alcanza aproximadamente 8x solo en densidad de instrucciones. Esto es
+consistente con el perfilado de accesos a memoria realizado con \texttt{perf mem}, que
+mostró una tasa de aciertos en L1 superior al 56\% incluso en la versión base, indicando
+que la jerarquía de caché no era el cuello de botella principal. La ganancia observada
+proviene fundamentalmente de procesar más trabajo útil por instrucción, no de reducir
+fallos de caché.
 
 \item
 Al comparar la implementación secuencial optimizada por memoria y compilador (453 ms, un hilo) contra la implementación paralela con OpenMP sin optimización de memoria usando 12 hilos (5\,454 ms), se observa que la versión secuencial optimizada es aproximadamente 12 veces más rápida que la versión paralela de máxima concurrencia sin optimización de memoria. Este resultado reproduce el mismo patrón observado en el proyecto de Jacobi: cuando el cuello de botella principal es el acceso a memoria, agregar hilos sin mejorar la localidad de datos y el uso de caché únicamente incrementa la presión sobre el bus de memoria.
