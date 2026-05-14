@@ -1,39 +1,41 @@
 """
-report.py  --  Traffic Automaton benchmark report generator.
+report.py  --  Traffic Automaton benchmark report generator  (v5)
 
-Reads CSVs produced by benchmark.sh and writes:
-  - An Excel workbook (reporte_traffic.xlsx) with five analytical sheets
-  - PNG table images for each sheet (for document embedding)
-  - Comparison charts (time, speedup, scaling)
+Structure of each sheet
+-----------------------
+  Tabla 1  — Mediciones individuales:
+              rows = repetitions, cols = N sizes
+              + summary rows: Promedio / Desv. Est. / CV (%)
+              One block per implementation, stacked vertically.
 
-Expected CSV columns:
-  suite, impl, parallelism, road_length, density, repetition,
-  wall_time_ms, avg_velocity, throughput_mcells_s
+  Tabla 2  — Promedio y Speedup:
+              One row per implementation.
+              Cols: N sizes (avg ms) | N sizes (speedup vs best_seq) | SpUp Prom.
 
-Sheets:
-  1. Serial         seq_std vs seq_opt (if present)
-  2. OpenMP         seq_std vs omp(2,4,6,8)
-  3. Escalabilidad  Speedup + efficiency vs p for each road_length
-  4. Correlacion    threads(p) vs processes(p) at same p and N (if MPI/fork present)
-  5. Comparacion    Best representative of each strategy
+  Two charts per stage (time + speedup), each saved as a separate PNG.
 
-Usage:
-    python3 report.py [results_dir]
-    Default: results_dir = results/
+Stages
+------
+  0. Secuencial       seq | seq_opt | seq_mem | seq_mem_opt
+  1. OMP base         best_seq vs omp_p2..p12
+  2. OMP compilador   best_seq vs omp_opt_p2..p12
+  3. OMP comp+mem     best_seq vs omp_mem_opt_p2..p12
+  4. Final            best of each strategy
+
+  5. Densidad         time + velocity vs density  (separate sheet)
+
+CSV columns:
+  impl, threads, road_length, density, repetition, wall_time_ms, avg_velocity
 """
 
 from __future__ import annotations
-
-import io
-import math
-import os
-import sys
+import math, os, sys
 from dataclasses import dataclass
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.table as mpl_table
+import matplotlib.ticker as mticker
 import pandas as pd
 import numpy as np
 from openpyxl import Workbook
@@ -44,244 +46,224 @@ from openpyxl.utils import get_column_letter
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-RESULTS_DIR = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "results"
+RESULTS_DIR = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "tests/machine1/results_traffic"
 OUTPUT_PATH = os.path.join(RESULTS_DIR, "reporte_traffic.xlsx")
 CHARTS_DIR  = os.path.join(RESULTS_DIR, "charts")
 TABLES_DIR  = os.path.join(RESULTS_DIR, "tables")
+CSV_FILE    = "data.csv"
 
-SUITE_FILES = {
-    "serial": "data_serial.csv",
-    "omp":    "data_omp.csv",
-    "mpi":    "data_mpi.csv",   # optional
+MEASURE_STEPS   = 1000
+SCALING_DENSITY = 0.50
+N_VALUES        = [8_000, 64_000, 500_000, 2_000_000, 5_000_000, 10_000_000]
+DENSITY_EXPERIMENT_N       = 20_000_000
+DENSITY_EXPERIMENT_THREADS = [0, 4, 8, 12]
+DENSITY_VALUES             = [0.10, 0.30, 0.50, 0.70, 0.90]
+
+SEQ         = "Serial Base"
+SEQ_OPT     = "Serial + Compiler Opt"
+SEQ_MEM     = "Serial + Memory Opt"
+SEQ_MEM_OPT = "Serial + Compiler & Memory Opt"
+OMP         = "OpenMP Base"
+OMP_OPT     = "OpenMP + Compiler Opt"
+OMP_MEM     = "OpenMP + Memory Opt"
+OMP_MEM_OPT = "OpenMP + Compiler & Memory Opt"
+
+IMPL_NAME_MAP = {
+    "traffic_seq":         SEQ,
+    "traffic_seq_opt":     SEQ_OPT,
+    "traffic_seq_mem":     SEQ_MEM,
+    "traffic_seq_mem_opt": SEQ_MEM_OPT,
+    "traffic_omp":         OMP,
+    "traffic_omp_opt":     OMP_OPT,
+    "traffic_omp_mem":     OMP_MEM,
+    "traffic_omp_mem_opt": OMP_MEM_OPT,
 }
 
-IMPL_COLORS: dict[str, str] = {
-    "seq_std":  "#2E75B6",
-    "seq_opt":  "#C00000",
-    "omp_1":    "#BBBBBB",
-    "omp_2":    "#70AD47",
-    "omp_4":    "#ED7D31",
-    "omp_6":    "#4472C4",
-    "omp_8":    "#7030A0",
-    "mpi_2":    "#BBBBBB",
-    "mpi_4":    "#5CB85C",
-    "mpi_6":    "#337AB7",
-    "mpi_8":    "#F0AD4E",
+PALETTE = {
+    SEQ:         "#2E75B6",
+    SEQ_OPT:     "#ED7D31",
+    SEQ_MEM:     "#70AD47",
+    SEQ_MEM_OPT: "#C00000",
+    OMP:         "#7030A0",
+    OMP_OPT:     "#00B0F0",
+    OMP_MEM:     "#FF66CC",
+    OMP_MEM_OPT: "#375623",
 }
-
-C = {
-    "dark":      "1F3557",
-    "mid":       "2E75B6",
-    "light":     "DCE6F1",
-    "alt":       "F4F8FC",
-    "green_bg":  "E2F0D9",
-    "green_fg":  "2F6B1E",
-    "summary_bg":"EBF3FB",
-    "summary_fg":"1F4E79",
-    "impl_hdr":  "1F4E79",
-    "sep":       "D9E1F2",
-    "corr_t_bg": "E2EFDA",
-    "corr_p_bg": "FCE4D6",
-}
+THREAD_PALETTE = {2: "#BBBBBB", 4: "#70AD47", 6: "#4472C4", 8: "#ED7D31", 12: "#000A94"}
 
 CHART_STYLE = {
-    "figure.facecolor":  "white",
-    "axes.facecolor":    "white",
-    "axes.grid":         True,
-    "grid.color":        "#E7EDF3",
-    "grid.linestyle":    "--",
-    "grid.alpha":        0.75,
-    "axes.spines.top":   False,
-    "axes.spines.right": False,
-    "axes.titleweight":  "bold",
-    "axes.labelsize":    10,
-    "axes.titlesize":    11,
-    "legend.frameon":    False,
-    "font.size":         10,
+    "figure.facecolor": "white", "axes.facecolor": "white",
+    "axes.grid": True, "grid.color": "#E7EDF3", "grid.linestyle": "--",
+    "grid.alpha": 0.75, "axes.spines.top": False, "axes.spines.right": False,
+    "axes.titleweight": "bold", "axes.labelsize": 10, "axes.titlesize": 11,
+    "legend.frameon": False, "font.size": 10,
 }
 FONT_NAME = "Calibri"
 
+C = {
+    "dark":       "1F3557",
+    "mid":        "2E75B6",
+    "light":      "DCE6F1",
+    "alt":        "F4F8FC",
+    "green_bg":   "E2F0D9",
+    "green_fg":   "2F6B1E",
+    "summary_bg": "EBF3FB",
+    "summary_fg": "1F4E79",
+    "impl_hdr":   "1F4E79",
+    "sep":        "D9E1F2",
+}
 
 # ---------------------------------------------------------------------------
-# Data model
+# Data types
 # ---------------------------------------------------------------------------
-AllReps = dict["Impl", dict[int, list[tuple[int, float, float, float]]]]
-# value tuple: (repetition, wall_time_ms, avg_velocity, throughput_mcells_s)
-
+# Impl -> {road_length: [(rep, wall_time_ms, avg_velocity), ...]}
+AllReps = dict
 
 @dataclass(frozen=True)
 class Impl:
-    name:        str   # seq_std | seq_opt | omp | mpi
-    parallelism: int   # 0 for serial, N threads/procs otherwise
+    name: str
+    parallelism: int   # 0 = serial
 
     @property
     def label(self) -> str:
-        labels = {
-            "seq_std": "Secuencial estándar",
-            "seq_opt": "Secuencial optimizado (-O3 full)",
-        }
-        if self.name in labels:
-            return labels[self.name]
-        if self.name == "omp":
-            return f"OpenMP ({self.parallelism} hilos)"
-        if self.name == "mpi":
-            return f"MPI ({self.parallelism} procesos)"
-        return f"{self.name} ({self.parallelism})"
+        if self.parallelism == 0:
+            return self.name
+        return f"{self.name}  (p={self.parallelism})"
 
     @property
     def short_label(self) -> str:
-        return self.name if self.parallelism == 0 else f"{self.name}_{self.parallelism}"
+        return self.name if self.parallelism == 0 else f"{self.name}_p{self.parallelism}"
 
     @property
     def color(self) -> str:
-        return IMPL_COLORS.get(self.short_label, "#888888")
-
+        return PALETTE.get(self.name, "#888888")
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _size_label(n: int) -> str:
-    if n >= 1_000_000 and n % 1_000_000 == 0:
-        return f"{n // 1_000_000}M"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000 and n % 1_000 == 0:
-        return f"{n // 1_000}K"
+def _size_label(n):
+    if n >= 1_000_000 and n % 1_000_000 == 0: return f"{n//1_000_000}M"
+    if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+    if n >= 1_000 and n % 1_000 == 0: return f"{n//1_000}K"
     return str(n)
 
-def _fn(x, d=3):
-    try:
-        f = float(x)
-        return "—" if math.isnan(f) else f"{f:,.{d}f}"
-    except Exception:
-        return "—"
-
-def _fp(x, d=2):
-    try:
-        f = float(x)
-        return "—" if math.isnan(f) else f"{f:.{d}f}%"
-    except Exception:
-        return "—"
-
 def _mean(vals):
-    return sum(vals) / len(vals) if vals else math.nan
+    clean = [float(v) for v in vals if v is not None and not math.isnan(float(v))]
+    return sum(clean)/len(clean) if clean else math.nan
 
 def _std(vals):
-    if len(vals) < 2: return 0.0
-    m = _mean(vals)
-    return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
+    clean = [float(v) for v in vals if v is not None and not math.isnan(float(v))]
+    if len(clean) < 2: return 0.0
+    m = _mean(clean)
+    return math.sqrt(sum((v-m)**2 for v in clean)/len(clean))
 
 def _cv(vals):
     m = _mean(vals)
-    return 100 * _std(vals) / m if m else math.nan
-
+    return 100*_std(vals)/m if m and not math.isnan(m) else math.nan
 
 # ---------------------------------------------------------------------------
-# Data loading
+# CSV loading
 # ---------------------------------------------------------------------------
-def load_csv(suite: str) -> pd.DataFrame | None:
-    path = os.path.join(RESULTS_DIR, SUITE_FILES[suite])
+_CSV_CACHE = None
+
+def load_csv():
+    global _CSV_CACHE
+    if _CSV_CACHE is not None: return _CSV_CACHE
+    path = os.path.join(RESULTS_DIR, CSV_FILE)
     if not os.path.exists(path):
-        print(f"  [--]  {path} not found (skipping)")
-        return None
+        print(f" [--] {path} not found."); return None
     df = pd.read_csv(path)
     df.columns = [c.strip().lower() for c in df.columns]
-    df["impl"]               = df["impl"].str.strip()
-    df["parallelism"]        = df["parallelism"].astype(int)
-    df["road_length"]        = df["road_length"].astype(int)
-    df["repetition"]         = df["repetition"].astype(int)
-    df["wall_time_ms"]       = df["wall_time_ms"].astype(float)
-    df["avg_velocity"]       = df.get("avg_velocity", pd.Series(math.nan, index=df.index)).astype(float)
-    df["throughput_mcells_s"]= df.get("throughput_mcells_s", pd.Series(math.nan, index=df.index)).astype(float)
-    print(f"  [OK]  {path}  ({len(df)} rows)")
-    return df
+    if "threads" in df.columns and "parallelism" not in df.columns:
+        df.rename(columns={"threads": "parallelism"}, inplace=True)
+    df["impl"]         = df["impl"].str.strip().map(lambda x: IMPL_NAME_MAP.get(x, x))
+    df["parallelism"]  = df["parallelism"].astype(int)
+    df["road_length"]  = df["road_length"].astype(int)
+    df["density"]      = df["density"].astype(float)
+    df["repetition"]   = df["repetition"].astype(int)
+    df["wall_time_ms"] = df["wall_time_ms"].astype(float)
+    df["avg_velocity"] = df["avg_velocity"].astype(float)
+    df.loc[df["wall_time_ms"] == 0, "wall_time_ms"] = math.nan
+    _CSV_CACHE = df
+    print(f" [OK] {path}  ({len(df)} rows)")
+    return _CSV_CACHE
 
+def get_scaling_df(df):
+    return df[df["road_length"].isin(N_VALUES) & (df["density"] == SCALING_DENSITY)].copy()
 
-def build_all_reps(frames: list[pd.DataFrame]) -> AllReps:
-    combined = pd.concat(frames, ignore_index=True)
-    result: AllReps = {}
-    for (name, par), grp in combined.groupby(["impl", "parallelism"]):
-        impl = Impl(name=str(name), parallelism=int(str(par)))
+def get_density_df(df):
+    return df[df["road_length"] == DENSITY_EXPERIMENT_N].copy()
+
+def build_all_reps(df) -> AllReps:
+    result = {}
+    for (name, par), grp in df.groupby(["impl","parallelism"]):
+        impl = Impl(name=str(name), parallelism=int(par))
         result[impl] = {}
         for size, sub in grp.groupby("road_length"):
-            result[impl][int(str(size))] = sorted(
-                [(int(r), float(t), float(v), float(tp))
-                 for r, t, v, tp in zip(
-                     sub["repetition"], sub["wall_time_ms"],
-                     sub["avg_velocity"], sub["throughput_mcells_s"])],
-                key=lambda x: x[0],
-            )
+            result[impl][int(size)] = sorted(
+                [(int(r), float(t), float(v))
+                 for r, t, v in zip(sub["repetition"], sub["wall_time_ms"], sub["avg_velocity"])
+                 if not math.isnan(float(t))],
+                key=lambda x: x[0])
     return result
 
+def compute_avgs(all_reps) -> dict:
+    return {impl: {s: _mean([t for _,t,_ in pairs]) for s, pairs in sizes.items()}
+            for impl, sizes in all_reps.items()}
 
-def compute_avgs(all_reps: AllReps) -> dict[Impl, dict[int, float]]:
-    return {
-        impl: {s: _mean([t for _, t, _, _ in pairs])
-               for s, pairs in sizes.items()}
-        for impl, sizes in all_reps.items()
-    }
-
-
-def compute_avg_vel(all_reps: AllReps) -> dict[Impl, dict[int, float]]:
-    return {
-        impl: {s: _mean([v for _, _, v, _ in pairs])
-               for s, pairs in sizes.items()}
-        for impl, sizes in all_reps.items()
-    }
-
-
-def compute_avg_tp(all_reps: AllReps) -> dict[Impl, dict[int, float]]:
-    return {
-        impl: {s: _mean([tp for _, _, _, tp in pairs])
-               for s, pairs in sizes.items()}
-        for impl, sizes in all_reps.items()
-    }
-
-
-def best_parallel(avg_data, sizes, impl_name, ref) -> "Impl | None":
-    ref_avgs = avg_data.get(ref, {})
-    if not ref_avgs: return None
-    best_impl, best_sp = None, 0.0
+def find_best_serial(avg_data, sizes):
+    serial_names = {SEQ, SEQ_OPT, SEQ_MEM, SEQ_MEM_OPT}
+    best_impl, best_sum = None, float("inf")
     for impl, times in avg_data.items():
-        if impl.name != impl_name: continue
-        sp_vals = [ref_avgs[s] / times[s] for s in sizes
-                   if s in times and s in ref_avgs and times[s] > 0]
-        if sp_vals:
-            sp = _mean(sp_vals)
-            if sp > best_sp:
-                best_sp, best_impl = sp, impl
+        if impl.name not in serial_names: continue
+        total = sum(times.get(s, float("inf")) for s in sizes)
+        if total < best_sum: best_sum = total; best_impl = impl
     return best_impl
 
+def get_omp_variants(avg_data, omp_name):
+    return sorted([i for i in avg_data if i.name == omp_name], key=lambda i: i.parallelism)
+
+def best_par(family, avg_data, best_seq, sizes):
+    cands = [i for i in avg_data if i.name == family]
+    if not cands: return None
+    ref_avgs = avg_data.get(best_seq, {})
+    best, best_sp = None, 0.0
+    for impl in cands:
+        sp_vals = [ref_avgs[s]/avg_data[impl][s] for s in sizes
+                   if s in avg_data[impl] and s in ref_avgs and avg_data[impl][s] > 0]
+        sp = _mean(sp_vals)
+        if sp > best_sp: best_sp = sp; best = impl
+    return best
 
 # ---------------------------------------------------------------------------
 # Excel styling helpers
 # ---------------------------------------------------------------------------
-def _thin_border() -> Border:
+def _thin_border():
     s = Side(style="thin", color="BDD7EE")
     return Border(left=s, right=s, top=s, bottom=s)
 
-def _thick_border() -> Border:
+def _thick_border():
     thick = Side(style="medium", color="1F4E79")
-    thin  = Side(style="thin",   color="BDD7EE")
+    thin  = Side(style="thin", color="BDD7EE")
     return Border(left=thick, right=thick, top=thin, bottom=thick)
 
-def _hdr(cell, value, bg=C["mid"], fg="FFFFFF", size=10, bold=True, align="center"):
-    cell.value     = value
+def _hdr(cell, v, bg=C["mid"], fg="FFFFFF", size=10, bold=True, align="center"):
+    cell.value     = v
     cell.font      = Font(name=FONT_NAME, bold=bold, size=size, color=fg)
     cell.fill      = PatternFill("solid", fgColor=bg)
     cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
     cell.border    = _thin_border()
 
-def _dat(cell, value, fmt=None, bg="FFFFFF", fg="000000", bold=False, align="right"):
-    cell.value     = value
+def _dat(cell, v, fmt=None, bg="FFFFFF", fg="000000", bold=False, align="right"):
+    cell.value     = v
     cell.font      = Font(name=FONT_NAME, bold=bold, size=10, color=fg)
     cell.fill      = PatternFill("solid", fgColor=bg)
     cell.alignment = Alignment(horizontal=align, vertical="center")
     cell.border    = _thin_border()
     if fmt: cell.number_format = fmt
 
-def _sdat(cell, value, fmt=None, bold=False):
-    _dat(cell, value, fmt=fmt, bg=C["summary_bg"], fg=C["summary_fg"], bold=bold)
+def _summary_dat(cell, v, fmt=None, bold=False):
+    _dat(cell, v, fmt=fmt, bg=C["summary_bg"], fg=C["summary_fg"], bold=bold)
 
 def _set_w(ws, col, w):
     ws.column_dimensions[get_column_letter(col)].width = w
@@ -294,326 +276,168 @@ def _title_row(ws, text, cols, row=1):
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     ws.row_dimensions[row].height = 26
 
-
 # ---------------------------------------------------------------------------
 # Chart helpers
 # ---------------------------------------------------------------------------
-def _save_fig(fig, name: str) -> str:
+def _save_fig(fig, name):
     os.makedirs(CHARTS_DIR, exist_ok=True)
     path = os.path.join(CHARTS_DIR, name)
     fig.savefig(path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
-def _plot_lines(ax, impls, avg_data, sizes, ylabel, log_scale=False):
-    for impl in impls:
-        times = avg_data.get(impl, {})
-        xs = [s for s in sizes if s in times]
-        ys = [times[s] for s in xs]
-        if not xs: continue
-        ax.plot(xs, ys, marker="o", lw=2.2, color=impl.color, label=impl.short_label)
-    if log_scale:
-        ax.set_yscale("log")
-    ax.set_xticks(sizes)
+def _categorical_xticks(ax, sizes):
+    positions = list(range(len(sizes)))
+    ax.set_xticks(positions)
     ax.set_xticklabels([_size_label(s) for s in sizes], rotation=20, ha="right")
-    ax.set_ylabel(ylabel)
-    ax.set_xlabel("N (road length)")
-    ax.legend(fontsize=8, loc="upper left")
+    return positions
 
-def chart_time(impls, avg_data, sizes, title, fname) -> str:
+def chart_time(impls, avg_data, sizes, title, fname):
+    positions = list(range(len(sizes)))
     with plt.rc_context(CHART_STYLE):
-        fig, ax = plt.subplots(figsize=(9, 5))
-        _plot_lines(ax, impls, avg_data, sizes, "Tiempo promedio (ms)", log_scale=True)
-        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-        fig.tight_layout()
-    return _save_fig(fig, fname)
-
-def chart_speedup(impls, avg_data, ref, sizes, title, fname) -> str:
-    ref_avgs = avg_data.get(ref, {})
-    with plt.rc_context(CHART_STYLE):
-        fig, ax = plt.subplots(figsize=(9, 5))
-        ax.axhline(1, color="#AAAAAA", lw=1.2, ls="--", label=f"ref: {ref.short_label}")
+        fig, ax = plt.subplots(figsize=(10, 5))
         for impl in impls:
-            if impl == ref or impl not in avg_data: continue
-            data = {s: ref_avgs[s] / avg_data[impl][s]
-                    for s in sizes if s in avg_data[impl] and s in ref_avgs
-                    and avg_data[impl][s] > 0}
-            if not data: continue
-            xs = sorted(data)
-            ax.plot(xs, [data[x] for x in xs], marker="o", lw=2.2,
-                    color=impl.color, label=impl.short_label)
-        ax.set_xticks(sizes)
-        ax.set_xticklabels([_size_label(s) for s in sizes], rotation=20, ha="right")
-        ax.set_ylabel("Speedup")
+            times = avg_data.get(impl, {})
+            xs = [positions[i] for i, s in enumerate(sizes) if s in times]
+            ys = [times[s] for s in sizes if s in times]
+            if xs:
+                color = THREAD_PALETTE.get(impl.parallelism, impl.color) if impl.parallelism > 0 else impl.color
+                ax.plot(xs, ys, marker="o", lw=2.2, color=color, label=impl.label)
+        _categorical_xticks(ax, sizes)
+        ax.set_yscale("log")
+        ax.set_ylabel("Tiempo promedio (ms)  [log]")
         ax.set_xlabel("N (road length)")
         ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
         ax.legend(fontsize=8, loc="upper left")
         fig.tight_layout()
     return _save_fig(fig, fname)
 
-def chart_scaling(par_counts, avg_data, ref, sizes, title, fname) -> str:
-    """Speedup and efficiency vs p — one subplot per road_length (up to 6)."""
-    ref_avgs = avg_data.get(ref, {})
-    plot_sizes = sizes[:6]
+def chart_speedup(ref_impl, cmp_impls, avg_data, sizes, title, fname, note=None):
+    ref_avgs  = avg_data.get(ref_impl, {})
+    positions = list(range(len(sizes)))
+    with plt.rc_context(CHART_STYLE):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.axhline(1.0, color="#AAAAAA", lw=1.4, ls="--", label=f"ref: {ref_impl.short_label}")
+        for impl in cmp_impls:
+            if impl not in avg_data: continue
+            xs, ys = [], []
+            for i, s in enumerate(sizes):
+                t = avg_data[impl].get(s); r = ref_avgs.get(s)
+                if t and r and t > 0: xs.append(positions[i]); ys.append(r/t)
+            if xs:
+                color = THREAD_PALETTE.get(impl.parallelism, impl.color) if impl.parallelism > 0 else impl.color
+                ax.plot(xs, ys, marker="o", lw=2.2, color=color, label=impl.label)
+        _categorical_xticks(ax, sizes)
+        ax.set_ylabel("Speedup  T(ref) / T(impl)")
+        ax.set_xlabel("N (road length)")
+        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+        ax.legend(fontsize=8, loc="upper left")
+        if note:
+            ax.annotate(note, xy=(0.01, 0.03), xycoords="axes fraction",
+                        fontsize=7, color="#888888", style="italic")
+        fig.tight_layout()
+    return _save_fig(fig, fname)
 
+def chart_scaling(ref_impl, omp_impls, avg_data, sizes, title, fname):
+    ref_avgs   = avg_data.get(ref_impl, {})
+    par_counts = sorted({i.parallelism for i in omp_impls if i.parallelism > 0})
+    plot_sizes = sizes[:6]
     with plt.rc_context(CHART_STYLE):
         ncols = min(3, len(plot_sizes))
-        nrows = math.ceil(len(plot_sizes) / ncols)
-        fig, axs = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows),
-                                squeeze=False)
-
+        nrows = math.ceil(len(plot_sizes)/ncols)
+        fig, axs = plt.subplots(nrows, ncols, figsize=(5*ncols, 4*nrows), squeeze=False)
         for idx, size in enumerate(plot_sizes):
-            ax = axs[idx // ncols][idx % ncols]
+            ax    = axs[idx//ncols][idx%ncols]
             ref_t = ref_avgs.get(size)
-            if not ref_t:
-                ax.set_title(f"N={_size_label(size)}")
-                ax.text(0.5, 0.5, "Sin ref", ha="center", va="center")
-                continue
-
-            sp_omp, eff_omp = [], []
-            sp_mpi, eff_mpi = [], []
+            if not ref_t: ax.set_visible(False); continue
+            sp_list, eff_list = [], []
             for p in par_counts:
-                for impl_name, sp_list, eff_list in [
-                    ("omp", sp_omp, eff_omp), ("mpi", sp_mpi, eff_mpi)
-                ]:
-                    impl = Impl(impl_name, p)
-                    t = avg_data.get(impl, {}).get(size)
-                    if t and t > 0:
-                        sp = ref_t / t
-                        sp_list.append(sp)
-                        eff_list.append(sp / p * 100)
-                    else:
-                        sp_list.append(None)
-                        eff_list.append(None)
-
-            valid_p = par_counts
+                impl_here = next((i for i in omp_impls if i.parallelism == p), None)
+                t = avg_data.get(impl_here, {}).get(size) if impl_here else None
+                if t and t > 0:
+                    sp = ref_t/t; sp_list.append(sp); eff_list.append(sp/p*100)
+                else:
+                    sp_list.append(float("nan")); eff_list.append(float("nan"))
             ax2 = ax.twinx()
             ax2.spines["right"].set_visible(True)
-
-            if any(v is not None for v in sp_omp):
-                ys = [v if v is not None else float("nan") for v in sp_omp]
-                ax.plot(valid_p, ys, "o-", color="#2E75B6", lw=2, label="SpUp OMP")
-                ys_e = [v if v is not None else float("nan") for v in eff_omp]
-                ax2.plot(valid_p, ys_e, "s--", color="#70AD47", lw=1.5, label="Eff OMP")
-
-            if any(v is not None for v in sp_mpi):
-                ys = [v if v is not None else float("nan") for v in sp_mpi]
-                ax.plot(valid_p, ys, "^-", color="#C00000", lw=2, label="SpUp MPI")
-                ys_e = [v if v is not None else float("nan") for v in eff_mpi]
-                ax2.plot(valid_p, ys_e, "v--", color="#ED7D31", lw=1.5, label="Eff MPI")
-
-            ax.plot(valid_p, valid_p, "k--", lw=1, alpha=0.4, label="Ideal")
+            ax2.spines["right"].set_color("#70AD47")
+            ax.plot(par_counts, sp_list,  "o-", color="#2E75B6", lw=2, label="Speedup")
+            ax2.plot(par_counts, eff_list, "s--", color="#70AD47", lw=1.5, label="Efic. (%)")
+            ax.plot(par_counts, par_counts, "k--", lw=1, alpha=0.3, label="Ideal")
             ax.set_title(f"N={_size_label(size)}", fontsize=10)
-            ax.set_xlabel("p"); ax.set_ylabel("Speedup"); ax2.set_ylabel("Eficiencia (%)")
-            ax.set_xticks(valid_p)
+            ax.set_xlabel("p (hilos)"); ax.set_ylabel("Speedup")
+            ax2.set_ylabel("Eficiencia (%)", color="#70AD47")
+            ax.set_xticks(par_counts)
             h1, l1 = ax.get_legend_handles_labels()
             h2, l2 = ax2.get_legend_handles_labels()
-            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc="upper left")
-
-        # Hide unused subplots
-        for idx in range(len(plot_sizes), nrows * ncols):
-            axs[idx // ncols][idx % ncols].set_visible(False)
-
+            ax.legend(h1+h2, l1+l2, fontsize=7, loc="upper left")
+        for idx in range(len(plot_sizes), nrows*ncols):
+            axs[idx//ncols][idx%ncols].set_visible(False)
         fig.suptitle(title, fontsize=12, fontweight="bold")
         fig.tight_layout()
     return _save_fig(fig, fname)
 
-def chart_velocity(impls, avg_vel, sizes, title, fname) -> str:
+def chart_density_time(density_df, title, fname):
+    density_values = sorted(density_df["density"].unique())
+    all_impls = [(SEQ, 0), (SEQ_OPT, 0), (SEQ_MEM_OPT, 0)] + \
+                [(OMP_MEM_OPT, t) for t in DENSITY_EXPERIMENT_THREADS if t > 0]
     with plt.rc_context(CHART_STYLE):
-        fig, ax = plt.subplots(figsize=(9, 4.5))
-        for impl in impls:
-            vels = avg_vel.get(impl, {})
-            xs = [s for s in sizes if s in vels]
-            ys = [vels[s] for s in xs]
-            if xs:
-                ax.plot(xs, ys, marker="o", lw=2, color=impl.color, label=impl.short_label)
-        ax.axhline(0.5, color="#BBBBBB", lw=1, ls="--", label="v̄=0.5 (ρ=0.5)")
-        ax.set_ylim(0, 1.05)
-        ax.set_xticks(sizes)
-        ax.set_xticklabels([_size_label(s) for s in sizes], rotation=20, ha="right")
-        ax.set_ylabel("v̄ (velocidad media)")
-        ax.set_xlabel("N (road length)")
-        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-        ax.legend(fontsize=8)
-        fig.tight_layout()
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for name, threads in all_impls:
+            sub = density_df[(density_df["impl"] == name) & (density_df["parallelism"] == threads)]
+            if sub.empty: continue
+            lbl   = name if threads == 0 else f"{name} (p={threads})"
+            color = THREAD_PALETTE.get(threads, PALETTE.get(name, "#888888"))
+            agg   = sub.groupby("density")["wall_time_ms"].mean().reindex(density_values)
+            ax.plot(density_values, agg, marker="o", lw=2, color=color, label=lbl)
+        ax.set_xlabel("Densidad ρ"); ax.set_ylabel("Tiempo medio (ms)")
+        ax.set_xticks(density_values); ax.legend(fontsize=7)
+        ax.set_title(title, fontsize=11); fig.tight_layout()
     return _save_fig(fig, fname)
 
+def chart_density_velocity(density_df, title, fname):
+    density_values = sorted(density_df["density"].unique())
+    all_impls = [(SEQ, 0), (SEQ_OPT, 0), (SEQ_MEM_OPT, 0)] + \
+                [(OMP_MEM_OPT, t) for t in DENSITY_EXPERIMENT_THREADS if t > 0]
+    with plt.rc_context(CHART_STYLE):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for name, threads in all_impls:
+            sub = density_df[(density_df["impl"] == name) & (density_df["parallelism"] == threads)]
+            if sub.empty: continue
+            lbl   = name if threads == 0 else f"{name} (p={threads})"
+            color = THREAD_PALETTE.get(threads, PALETTE.get(name, "#888888"))
+            agg   = sub.groupby("density")["avg_velocity"].mean().reindex(density_values)
+            ax.plot(density_values, agg, marker="o", lw=2, color=color, label=lbl)
+        rho_th = np.linspace(0.01, 0.99, 200)
+        v_th   = np.where(rho_th < 0.5, 1.0, (1-rho_th)/rho_th)
+        ax.plot(rho_th, v_th, "k--", lw=1.2, alpha=0.5, label="v∞ teórica")
+        ax.set_xlabel("Densidad ρ"); ax.set_ylabel("Velocidad media v̄")
+        ax.set_xticks(density_values); ax.set_ylim(0, 1.05); ax.legend(fontsize=7)
+        ax.set_title(title, fontsize=11); fig.tight_layout()
+    return _save_fig(fig, fname)
 
 # ---------------------------------------------------------------------------
-# PNG table images
+# Table 1: raw reps with Promedio / Desv. Est. / CV
 # ---------------------------------------------------------------------------
-def _save_table_image(table_data: list[list], col_headers: list[str],
-                      row_headers: list[str], title: str, fname: str,
-                      col_colors: list[str] | None = None) -> str:
-    """Render a DataFrame-style table as a PNG image for document embedding."""
-    os.makedirs(TABLES_DIR, exist_ok=True)
-    path = os.path.join(TABLES_DIR, fname)
-
-    n_rows = len(table_data)
-    n_cols = len(col_headers)
-    fig_w  = max(10, n_cols * 1.6)
-    fig_h  = max(2.5, (n_rows + 2) * 0.35)
-
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.axis("off")
-
-    # Header + row-label column
-    all_cols    = [""] + col_headers
-    all_data    = [[row_headers[i]] + list(table_data[i]) for i in range(n_rows)]
-
-    tbl = ax.table(
-        cellText=all_data,
-        colLabels=all_cols,
-        cellLoc="center",
-        loc="center",
-    )
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(8.5)
-    tbl.scale(1, 1.35)
-
-    # Style header row
-    for ci in range(n_cols + 1):
-        cell = tbl[0, ci]
-        cell.set_facecolor("#1F3557")
-        cell.set_text_props(color="white", fontweight="bold")
-
-    # Style row headers
-    for ri in range(1, n_rows + 1):
-        tbl[ri, 0].set_facecolor("#2E75B6")
-        tbl[ri, 0].set_text_props(color="white", fontweight="bold")
-
-    # Alternating rows + optional column colors
-    row_bg = ["#F4F8FC", "#FFFFFF"]
-    for ri in range(1, n_rows + 1):
-        for ci in range(1, n_cols + 1):
-            cell = tbl[ri, ci]
-            base_bg = row_bg[(ri - 1) % 2]
-            if col_colors and ci - 1 < len(col_colors):
-                cell.set_facecolor(col_colors[ci - 1])
-            else:
-                cell.set_facecolor(base_bg)
-
-    ax.set_title(title, fontsize=11, fontweight="bold",
-                 pad=10, color="#1F3557")
-    fig.tight_layout()
-    fig.savefig(path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
-    return path
-
-
-def build_speedup_table_image(impls: list[Impl],
-                               avg_data: dict[Impl, dict[int, float]],
-                               ref: Impl, sizes: list[int],
-                               title: str, fname: str) -> str:
-    ref_avgs = avg_data.get(ref, {})
-    col_headers = []
-    for s in sizes:
-        col_headers += [f"{_size_label(s)}\nAvg(ms)", f"{_size_label(s)}\nSpeedup"]
-    col_headers.append("SpUp\nProm.")
-
-    row_headers, table_data = [], []
-    for impl in impls:
-        row_headers.append(impl.short_label)
-        times  = avg_data.get(impl, {})
-        sp_refs = []
-        row    = []
-        for s in sizes:
-            avg_t   = times.get(s)
-            ref_avg = ref_avgs.get(s)
-            row.append(_fn(avg_t) if avg_t is not None else "—")
-            if impl == ref:
-                row.append("1.0000")
-                sp_refs.append(1.0)
-            elif avg_t and ref_avg and avg_t > 0:
-                sp = ref_avg / avg_t
-                row.append(f"{sp:.4f}")
-                sp_refs.append(sp)
-            else:
-                row.append("—")
-        row.append(f"{_mean(sp_refs):.4f}" if sp_refs else "—")
-        table_data.append(row)
-
-    return _save_table_image(
-        table_data, col_headers, row_headers, title, fname,
-        col_colors=[c for _ in sizes for c in ("#F0F5FF", "#E2F0D9")] + [None],
-    )
-
-
-def build_raw_table_image(impl: Impl, all_reps: AllReps, sizes: list[int],
-                          n_reps: int, title: str, fname: str) -> str:
-    reps_data = all_reps.get(impl, {})
-    col_headers = [_size_label(s) for s in sizes]
-    row_headers, table_data = [], []
-
-    for rep in range(1, n_reps + 1):
-        row_headers.append(f"Rep {rep}")
-        row = []
-        for s in sizes:
-            val = next((t for r, t, _, _ in reps_data.get(s, []) if r == rep), None)
-            row.append(_fn(val) if val is not None else "—")
-        table_data.append(row)
-
-    for lbl, fn in [("Promedio", lambda v: _fn(_mean(v))),
-                    ("Desv. Est.", lambda v: _fn(_std(v))),
-                    ("CV (%)", lambda v: _fp(_cv(v))),
-                    ("v̄ media", lambda v: _fn(_mean(v), d=4))]:
-        row_headers.append(lbl)
-        row = []
-        for s in sizes:
-            if lbl == "v̄ media":
-                vals = [v for _, _, v, _ in reps_data.get(s, [])]
-            else:
-                vals = [t for _, t, _, _ in reps_data.get(s, [])]
-            row.append(fn(vals) if vals else "—")
-        table_data.append(row)
-
-    return _save_table_image(table_data, col_headers, row_headers, title, fname)
-
-
-def build_scaling_table_image(par_counts, avg_data, avg_tp, ref,
-                               sizes, impl_name, title, fname) -> str:
-    ref_avgs = avg_data.get(ref, {})
-    col_headers = [f"N={_size_label(s)}\nTime(ms)"   for s in sizes] + \
-                  [f"N={_size_label(s)}\nSpeedup"     for s in sizes] + \
-                  [f"N={_size_label(s)}\nEff(%)"      for s in sizes] + \
-                  [f"N={_size_label(s)}\nMcells/s"    for s in sizes]
-
-    row_headers, table_data = [], []
-    for p in par_counts:
-        impl = Impl(impl_name, p)
-        times = avg_data.get(impl, {})
-        tps   = avg_tp.get(impl, {})
-        row_headers.append(f"p={p}")
-        row = []
-        for cols_fn in [
-            lambda s: (_fn(times.get(s)) if times.get(s) else "—"),
-            lambda s: (f"{ref_avgs[s]/times[s]:.4f}" if times.get(s) and ref_avgs.get(s) else "—"),
-            lambda s: (f"{ref_avgs[s]/times[s]/p*100:.1f}%" if times.get(s) and ref_avgs.get(s) else "—"),
-            lambda s: (_fn(tps.get(s), d=2) if tps.get(s) else "—"),
-        ]:
-            for s in sizes:
-                row.append(cols_fn(s))
-        table_data.append(row)
-
-    return _save_table_image(table_data, col_headers, row_headers, title, fname)
-
-
-# ---------------------------------------------------------------------------
-# Excel raw + speedup tables
-# ---------------------------------------------------------------------------
-def _write_raw_table_xl(ws, impls, all_reps, sizes, n_reps, start_row, n_cols):
+def _write_raw_table(ws, impls, all_reps, sizes, n_cols, start_row):
     cur = start_row
+
+    # Section title
     ws.merge_cells(f"A{cur}:{get_column_letter(n_cols)}{cur}")
-    c = ws.cell(cur, 1, value="Tabla 1  —  Mediciones individuales (ms) y velocidad media (v̄)")
-    c.font = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
-    c.fill = PatternFill("solid", fgColor=C["dark"])
+    c = ws.cell(cur, 1, value="Tabla 1  —  Mediciones individuales (ms)")
+    c.font      = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
+    c.fill      = PatternFill("solid", fgColor=C["dark"])
     c.alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[cur].height = 20
     cur += 1
 
-    for impl_idx, impl in enumerate(impls):
-        reps_data = all_reps.get(impl, {})
+    n_reps = max((len(pairs) for impl in impls
+                  for pairs in all_reps.get(impl, {}).values()), default=1)
 
+    for impl_idx, impl in enumerate(impls):
+        impl_reps = all_reps.get(impl, {})
+
+        # Implementation block header
         ws.merge_cells(f"A{cur}:{get_column_letter(n_cols)}{cur}")
         bh = ws.cell(cur, 1, value=impl.label)
         bh.font      = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
@@ -623,17 +447,19 @@ def _write_raw_table_xl(ws, impls, all_reps, sizes, n_reps, start_row, n_cols):
         ws.row_dimensions[cur].height = 20
         cur += 1
 
+        # Column headers
         _hdr(ws.cell(cur, 1), "Rep", bg=C["mid"], size=9)
-        for ci, size in enumerate(sizes, 2):
-            _hdr(ws.cell(cur, ci), f"N={_size_label(size)}", bg=C["mid"], size=9)
+        for ci, s in enumerate(sizes, 2):
+            _hdr(ws.cell(cur, ci), f"N={_size_label(s)}", bg=C["mid"], size=9)
         ws.row_dimensions[cur].height = 18
         cur += 1
 
+        # One row per repetition
         for rep in range(1, n_reps + 1):
             bg = C["alt"] if rep % 2 == 0 else "FFFFFF"
-            _dat(ws.cell(cur, 1), rep, fmt="0", bg=C["light"], bold=True, align="center")
-            for ci, size in enumerate(sizes, 2):
-                val = next((t for r, t, _, _ in reps_data.get(size, []) if r == rep), None)
+            _dat(ws.cell(cur, 1), rep, bg=C["light"], bold=True, align="center")
+            for ci, s in enumerate(sizes, 2):
+                val = next((t for r,t,_ in impl_reps.get(s, []) if r == rep), None)
                 if val is not None:
                     _dat(ws.cell(cur, ci), round(val, 3), fmt="#,##0.000", bg=bg)
                 else:
@@ -641,25 +467,24 @@ def _write_raw_table_xl(ws, impls, all_reps, sizes, n_reps, start_row, n_cols):
             ws.row_dimensions[cur].height = 16
             cur += 1
 
-        for s_label, fn, fmt in [
-            ("Promedio",   lambda v: _mean(v), "#,##0.000"),
-            ("Desv. Est.", lambda v: _std(v),  "#,##0.000"),
-            ("CV (%)",     lambda v: _cv(v),   "0.00"),
-            ("v̄ media",   lambda v: _mean(v), "0.000000"),
-        ]:
-            _hdr(ws.cell(cur, 1), s_label, bg=C["summary_bg"], fg=C["summary_fg"], size=9, align="left")
-            for ci, size in enumerate(sizes, 2):
-                if s_label == "v̄ media":
-                    vals = [v for _, _, v, _ in reps_data.get(size, [])]
-                else:
-                    vals = [t for _, t, _, _ in reps_data.get(size, [])]
+        # Summary rows
+        for s_label, s_idx in [("Promedio", 0), ("Desv. Est.", 1), ("CV (%)", 2)]:
+            _hdr(ws.cell(cur, 1), s_label, bg=C["summary_bg"], fg=C["summary_fg"],
+                 size=9, align="left", bold=True)
+            for ci, s in enumerate(sizes, 2):
+                vals = [t for _,t,_ in impl_reps.get(s, [])]
                 if vals:
-                    _sdat(ws.cell(cur, ci), round(fn(vals), 6), fmt=fmt, bold=(s_label == "Promedio"))
+                    mean = _mean(vals); std = _std(vals); cv = _cv(vals)
+                    show = [mean, std, cv][s_idx]
+                    fmt  = ["#,##0.000", "#,##0.000", "0.00"][s_idx]
+                    _summary_dat(ws.cell(cur, ci), round(show, 3 if s_idx < 2 else 2),
+                                 fmt=fmt, bold=(s_idx == 0))
                 else:
-                    _sdat(ws.cell(cur, ci), "—")
+                    _summary_dat(ws.cell(cur, ci), "—")
             ws.row_dimensions[cur].height = 16
             cur += 1
 
+        # Separator between implementations
         if impl_idx < len(impls) - 1:
             for ci in range(1, n_cols + 1):
                 ws.cell(cur, ci).fill = PatternFill("solid", fgColor=C["sep"])
@@ -668,45 +493,48 @@ def _write_raw_table_xl(ws, impls, all_reps, sizes, n_reps, start_row, n_cols):
 
     return cur
 
-
-def _write_speedup_table_xl(ws, impls, avg_data, ref, sizes, start_row):
-    cur = start_row
-    n_sp_cols = 1 + len(sizes) * 2 + 1
+# ---------------------------------------------------------------------------
+# Table 2: average time + speedup per impl
+# ---------------------------------------------------------------------------
+def _write_speedup_table(ws, impls, avg_data, ref_impl, sizes, start_row):
+    cur       = start_row
+    n_sp_cols = 1 + len(sizes)*2 + 1
 
     ws.merge_cells(f"A{cur}:{get_column_letter(n_sp_cols)}{cur}")
-    c = ws.cell(cur, 1, value="Tabla 2  —  Promedio y Speedup  (ref: seq_std)")
+    c = ws.cell(cur, 1, value=f"Tabla 2  —  Promedio y Speedup  (ref: {ref_impl.short_label})")
     c.font      = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
     c.fill      = PatternFill("solid", fgColor=C["dark"])
     c.alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[cur].height = 20
     cur += 1
 
-    _set_w(ws, 1, 32)
+    _set_w(ws, 1, 34)
     for si in range(len(sizes)):
-        _set_w(ws, 2 + si * 2, 13)
-        _set_w(ws, 3 + si * 2, 11)
-    _set_w(ws, n_sp_cols, 12)
+        _set_w(ws, 2 + si*2, 13)
+        _set_w(ws, 3 + si*2, 11)
+    _set_w(ws, n_sp_cols, 11)
 
     _hdr(ws.cell(cur, 1), "Implementación", bg=C["dark"], size=10)
-    for si, size in enumerate(sizes):
-        _hdr(ws.cell(cur, 2 + si * 2), f"N={_size_label(size)}\nAvg (ms)", bg=C["mid"], size=9)
-        _hdr(ws.cell(cur, 3 + si * 2), f"N={_size_label(size)}\nSpeedup",  bg=C["mid"], size=9)
+    for si, s in enumerate(sizes):
+        _hdr(ws.cell(cur, 2+si*2), f"N={_size_label(s)}\nAvg (ms)", bg=C["mid"], size=9)
+        _hdr(ws.cell(cur, 3+si*2), f"N={_size_label(s)}\nSpeedup",  bg=C["mid"], size=9)
     _hdr(ws.cell(cur, n_sp_cols), "SpUp\nProm.", bg=C["dark"], size=9)
     ws.row_dimensions[cur].height = 28
     cur += 1
 
-    ref_avgs = avg_data.get(ref, {})
+    ref_avgs = avg_data.get(ref_impl, {})
     for ri, impl in enumerate(impls):
-        bg     = C["alt"] if ri % 2 == 0 else "FFFFFF"
-        is_ref = (impl == ref)
-        times  = avg_data.get(impl, {})
+        bg    = C["alt"] if ri % 2 == 0 else "FFFFFF"
+        times = avg_data.get(impl, {})
         _dat(ws.cell(cur, 1), impl.label, bg=C["light"], bold=True, align="left")
 
-        sp_list = []
-        for si, size in enumerate(sizes):
-            avg_t   = times.get(size)
-            ref_avg = ref_avgs.get(size)
-            c_avg = ws.cell(cur, 2 + si * 2)
+        sp_cells = []
+        for si, s in enumerate(sizes):
+            avg_t   = times.get(s)
+            ref_avg = ref_avgs.get(s)
+            ac, sc  = 2 + si*2, 3 + si*2
+
+            c_avg = ws.cell(cur, ac)
             c_avg.value         = round(avg_t, 3) if avg_t else "N/A"
             c_avg.number_format = "#,##0.000"
             c_avg.font          = Font(name=FONT_NAME, size=10)
@@ -714,265 +542,211 @@ def _write_speedup_table_xl(ws, impls, avg_data, ref, sizes, start_row):
             c_avg.alignment     = Alignment(horizontal="right", vertical="center")
             c_avg.border        = _thin_border()
 
-            c_sp = ws.cell(cur, 3 + si * 2)
-            if is_ref:
-                sp_val = 1.0
+            c_sp = ws.cell(cur, sc)
+            if impl == ref_impl:
+                c_sp.value = 1.0
             elif avg_t and avg_t > 0 and ref_avg:
-                sp_val = round(ref_avg / avg_t, 4)
-                sp_list.append(sp_val)
+                c_sp.value = round(ref_avg / avg_t, 4)
+                sp_cells.append(get_column_letter(sc) + str(cur))
             else:
-                sp_val = "N/A"
-            c_sp.value         = sp_val
+                c_sp.value = "N/A"
             c_sp.number_format = "0.0000"
             c_sp.font          = Font(name=FONT_NAME, size=10, color=C["green_fg"])
             c_sp.fill          = PatternFill("solid", fgColor=C["green_bg"])
             c_sp.alignment     = Alignment(horizontal="right", vertical="center")
             c_sp.border        = _thin_border()
 
-        c_avsp = ws.cell(cur, n_sp_cols)
-        c_avsp.value         = round(_mean(sp_list), 4) if sp_list else (1.0 if is_ref else "N/A")
-        c_avsp.number_format = "0.0000"
-        c_avsp.font          = Font(name=FONT_NAME, bold=True, size=10, color=C["green_fg"])
-        c_avsp.fill          = PatternFill("solid", fgColor=C["green_bg"])
-        c_avsp.alignment     = Alignment(horizontal="right", vertical="center")
-        c_avsp.border        = _thin_border()
+        c_av = ws.cell(cur, n_sp_cols)
+        if sp_cells:
+            c_av.value = f"=IFERROR(AVERAGE({','.join(sp_cells)}),\"N/A\")"
+        elif impl == ref_impl:
+            c_av.value = 1.0
+        else:
+            c_av.value = "N/A"
+        c_av.number_format = "0.00"
+        c_av.font          = Font(name=FONT_NAME, bold=True, size=10, color=C["green_fg"])
+        c_av.fill          = PatternFill("solid", fgColor=C["green_bg"])
+        c_av.alignment     = Alignment(horizontal="right", vertical="center")
+        c_av.border        = _thin_border()
         ws.row_dimensions[cur].height = 17
         cur += 1
 
     return cur
 
+# ---------------------------------------------------------------------------
+# Full sheet writer
+# ---------------------------------------------------------------------------
+def write_sheet(wb, sheet_name, title, impls, all_reps, avg_data,
+                ref_impl, sizes, chart_time_path, chart_sp_path,
+                chart_scale_path=None):
+    ws    = wb.create_sheet(sheet_name)
+    n_raw = 1 + len(sizes)
 
-def write_sheet(wb, sheet_name, title, impls, all_reps, ref, sizes,
-                chart_time_path, chart_sp_path, extra_chart_path=None):
-    ws      = wb.create_sheet(sheet_name)
-    avg_data = compute_avgs(all_reps)
-    n_reps  = max((len(pairs)
-                   for impl in impls
-                   for pairs in all_reps.get(impl, {}).values()), default=5)
-    n_cols  = 1 + len(sizes)
-
-    _title_row(ws, title, n_cols)
-    ws.row_dimensions[1].height = 26
+    _title_row(ws, title, n_raw)
     _set_w(ws, 1, 8)
-    for ci in range(2, n_cols + 1):
-        _set_w(ws, ci, 14)
+    for ci in range(2, n_raw + 1): _set_w(ws, ci, 16)
 
-    cur = _write_raw_table_xl(ws, impls, all_reps, sizes, n_reps, 2, n_cols)
+    cur = _write_raw_table(ws, impls, all_reps, sizes, n_raw, start_row=2)
     cur += 2
-    cur = _write_speedup_table_xl(ws, impls, avg_data, ref, sizes, cur)
+    cur = _write_speedup_table(ws, impls, avg_data, ref_impl, sizes, start_row=cur)
+    cur += 3
 
-    anchor = cur + 3
-    for a, path in [(f"A{anchor}", chart_time_path),
-                    (f"L{anchor}", chart_sp_path)]:
+    for anchor, path, w, h in [
+        (f"A{cur}",  chart_time_path,  680, 390),
+        (f"M{cur}",  chart_sp_path,    680, 390),
+        (f"A{cur+24}", chart_scale_path, 1050, 570),
+    ]:
         if path and os.path.exists(path):
-            img        = XLImage(path)
-            img.width  = 620
-            img.height = 360
-            ws.add_image(img, a)
-    if extra_chart_path and os.path.exists(extra_chart_path):
-        img        = XLImage(extra_chart_path)
-        img.width  = 620
-        img.height = 360
-        ws.add_image(img, f"A{anchor + 22}")
+            img = XLImage(path); img.width = w; img.height = h
+            ws.add_image(img, anchor)
 
-
-def write_scaling_sheet(wb, all_reps, ref, par_counts, sizes,
-                        chart_scale_path, impl_name="omp"):
-    ws       = wb.create_sheet("3. Escalabilidad")
-    avg_data = compute_avgs(all_reps)
-    avg_tp   = compute_avg_tp(all_reps)
-    ref_avgs = avg_data.get(ref, {})
-
-    N_COLS = 5
-    _title_row(ws, f"Escalabilidad OpenMP  |  speedup y eficiencia vs p  |  ref={ref.short_label}", N_COLS)
-    ws.row_dimensions[1].height = 26
-    for i, w in enumerate([8, 16, 14, 12, 16], 1):
-        _set_w(ws, i, w)
+# ---------------------------------------------------------------------------
+# Density sheet
+# ---------------------------------------------------------------------------
+def write_density_sheet(wb, density_df, chart_time_path, chart_vel_path):
+    ws = wb.create_sheet("5. Densidad")
+    density_values = sorted(density_df["density"].unique())
+    N_COLS = len(density_values) + 1
+    _title_row(ws, f"Experimento de densidad  |  N={_size_label(DENSITY_EXPERIMENT_N)}", N_COLS)
+    _set_w(ws, 1, 24)
+    for ci in range(2, N_COLS+1): _set_w(ws, ci, 14)
 
     cur = 2
-    for size in sizes:
-        ref_t = ref_avgs.get(size)
+    for metric, col, fmt in [
+        ("Tiempo medio (ms)", "wall_time_ms", "#,##0.000"),
+        ("Velocidad media v̄", "avg_velocity", "0.000000"),
+    ]:
         ws.merge_cells(f"A{cur}:{get_column_letter(N_COLS)}{cur}")
-        bh = ws.cell(cur, 1, value=f"N = {_size_label(size)}  |  ref seq_std = {_fn(ref_t)} ms")
-        bh.font      = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
-        bh.fill      = PatternFill("solid", fgColor=C["impl_hdr"])
+        bh = ws.cell(cur, 1, value=metric)
+        bh.font = Font(name=FONT_NAME, bold=True, size=11, color="FFFFFF")
+        bh.fill = PatternFill("solid", fgColor=C["impl_hdr"])
         bh.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-        bh.border    = _thick_border()
         ws.row_dimensions[cur].height = 20
         cur += 1
 
-        for ci, h in enumerate(["p", "Avg (ms)", "Speedup", "Eficiencia (%)", "Throughput (Mcells/s)"], 1):
-            _hdr(ws.cell(cur, ci), h, bg=C["mid"], size=9)
+        _hdr(ws.cell(cur, 1), "Impl", bg=C["mid"], size=9)
+        for ci, d in enumerate(density_values, 2):
+            _hdr(ws.cell(cur, ci), f"ρ={d:.2f}", bg=C["mid"], size=9)
         ws.row_dimensions[cur].height = 18
         cur += 1
 
-        for pi, p in enumerate(par_counts):
-            impl   = Impl(impl_name, p)
-            avg_t  = avg_data.get(impl, {}).get(size)
-            avg_t_ = avg_tp.get(impl, {}).get(size)
-            sp     = ref_t / avg_t  if (avg_t  and ref_t) else None
-            eff    = sp / p * 100   if sp is not None else None
-            bg     = C["alt"] if pi % 2 == 0 else "FFFFFF"
-
-            _dat(ws.cell(cur, 1), p, fmt="0", bg=C["light"], bold=True, align="center")
-            _dat(ws.cell(cur, 2), round(avg_t,  3) if avg_t  else "—", fmt="#,##0.000", bg=bg)
-            _dat(ws.cell(cur, 3), round(sp,  4) if sp  else "—", fmt="0.0000", bg=C["green_bg"], fg=C["green_fg"])
-            _dat(ws.cell(cur, 4), round(eff, 2) if eff else "—", fmt="0.00",   bg=C["green_bg"], fg=C["green_fg"])
-            _dat(ws.cell(cur, 5), round(avg_t_, 3) if avg_t_ else "—", fmt="#,##0.000", bg=bg)
+        for ri, (name, threads) in enumerate([
+            (SEQ, 0), (SEQ_OPT, 0), (SEQ_MEM_OPT, 0),
+            (OMP_MEM_OPT, 4), (OMP_MEM_OPT, 8), (OMP_MEM_OPT, 12),
+        ]):
+            sub = density_df[(density_df["impl"]==name) & (density_df["parallelism"]==threads)]
+            lbl = name if threads == 0 else f"{name} (p={threads})"
+            bg  = C["alt"] if ri % 2 == 0 else "FFFFFF"
+            _dat(ws.cell(cur, 1), lbl, bg=C["light"], bold=True, align="left")
+            for ci, d in enumerate(density_values, 2):
+                val = sub[sub["density"]==d][col].mean() if not sub.empty else math.nan
+                _dat(ws.cell(cur, ci),
+                     round(val, 4) if not math.isnan(val) else "—",
+                     fmt=fmt, bg=bg)
             ws.row_dimensions[cur].height = 16
             cur += 1
 
-        for ci in range(1, N_COLS + 1):
+        for ci in range(1, N_COLS+1):
             ws.cell(cur, ci).fill = PatternFill("solid", fgColor=C["sep"])
         ws.row_dimensions[cur].height = 8
         cur += 1
 
     cur += 2
-    if chart_scale_path and os.path.exists(chart_scale_path):
-        img        = XLImage(chart_scale_path)
-        img.width  = 860
-        img.height = 520
-        ws.add_image(img, f"A{cur}")
-
+    for anchor, path in [(f"A{cur}", chart_time_path), (f"M{cur}", chart_vel_path)]:
+        if path and os.path.exists(path):
+            img = XLImage(path); img.width = 680; img.height = 400
+            ws.add_image(img, anchor)
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
     os.makedirs(CHARTS_DIR, exist_ok=True)
-    os.makedirs(TABLES_DIR, exist_ok=True)
 
-    print("Reading CSVs...")
-    df_serial = load_csv("serial")
-    df_omp    = load_csv("omp")
-    df_mpi    = load_csv("mpi")
+    df = load_csv()
+    if df is None: print("No data found."); sys.exit(1)
 
-    frames = [df for df in [df_serial, df_omp, df_mpi] if df is not None]
-    if not frames:
-        print("No data found. Run benchmark.sh first.")
-        sys.exit(1)
+    scaling_df = get_scaling_df(df)
+    density_df = get_density_df(df)
+    all_reps   = build_all_reps(scaling_df)
+    avg_data   = compute_avgs(all_reps)
+    sizes      = sorted({s for szs in all_reps.values() for s in szs})
 
-    all_reps  = build_all_reps(frames)
-    avg_data  = compute_avgs(all_reps)
-    avg_vel   = compute_avg_vel(all_reps)
-    avg_tp    = compute_avg_tp(all_reps)
-    sizes     = sorted({s for szs in all_reps.values() for s in szs})
+    best_seq = find_best_serial(avg_data, sizes) or Impl(SEQ, 0)
+    omp_impls         = get_omp_variants(avg_data, OMP)
+    omp_opt_impls     = get_omp_variants(avg_data, OMP_OPT)
+    omp_mem_opt_impls = get_omp_variants(avg_data, OMP_MEM_OPT)
+    best_omp         = best_par(OMP,         avg_data, best_seq, sizes)
+    best_omp_opt     = best_par(OMP_OPT,     avg_data, best_seq, sizes)
+    best_omp_mem_opt = best_par(OMP_MEM_OPT, avg_data, best_seq, sizes)
 
-    REF = Impl("seq_std", 0)
-
-    par_counts   = sorted({i.parallelism for i in all_reps if i.parallelism > 0})
-    omp_counts   = sorted({i.parallelism for i in all_reps if i.name == "omp"})
-    mpi_counts   = sorted({i.parallelism for i in all_reps if i.name == "mpi"})
-
-    def present(impl):
-        return impl in all_reps
-
-    impls_serial = [i for i in [REF, Impl("seq_opt", 0)] if present(i)]
-    impls_omp    = [REF] + [Impl("omp", p) for p in omp_counts if present(Impl("omp", p))]
-    impls_mpi    = [REF] + [Impl("mpi", p) for p in mpi_counts if present(Impl("mpi", p))]
-
-    best_omp = best_parallel(avg_data, sizes, "omp", REF)
-    best_mpi = best_parallel(avg_data, sizes, "mpi", REF)
-    impls_final = [i for i in [REF, Impl("seq_opt", 0), best_omp, best_mpi]
-                   if i is not None and present(i)]
-
-    n_reps = max((len(pairs)
-                  for szs in all_reps.values()
-                  for pairs in szs.values()), default=5)
+    print(f"\n[INFO] Best serial : {best_seq.short_label}")
+    for lbl, impl in [("omp", best_omp), ("omp_opt", best_omp_opt), ("omp_mem_opt", best_omp_mem_opt)]:
+        print(f"[INFO] Best {lbl:12s}: {impl.short_label if impl else 'N/A'}")
 
     print("\nGenerating charts...")
 
-    ct1 = chart_time(impls_serial, avg_data, sizes,
-                     "Tiempo  |  Variantes seriales", "serial_time.png")
-    cs1 = chart_speedup(impls_serial, avg_data, REF, sizes,
-                        "Speedup  |  serial_opt vs seq_std", "serial_sp.png")
-    cv1 = chart_velocity(impls_serial, avg_vel, sizes,
-                         "Velocidad media v̄  |  variantes seriales (ρ=0.50)", "serial_vel.png")
+    serial_impls = [Impl(n, 0) for n in [SEQ, SEQ_OPT, SEQ_MEM, SEQ_MEM_OPT] if Impl(n,0) in avg_data]
 
-    ct2 = chart_time(impls_omp, avg_data, sizes,
-                     "Tiempo  |  seq_std vs OpenMP(p)", "omp_time.png")
-    cs2 = chart_speedup(impls_omp, avg_data, REF, sizes,
-                        "Speedup  |  T(seq_std) / T(omp, p)", "omp_sp.png")
+    ct0  = chart_time(serial_impls, avg_data, sizes, "Secuenciales — tiempo", "fig_seq_time.png")
+    cs0  = chart_speedup(Impl(SEQ,0), [i for i in serial_impls if i != Impl(SEQ,0)], avg_data, sizes,
+                         "Secuenciales — speedup vs Serial Base", "fig_seq_speedup.png")
 
-    csc = chart_scaling(par_counts, avg_data, REF, sizes,
-                        "Escalabilidad OpenMP — Speedup y Eficiencia vs p", "scaling.png")
+    ct1  = chart_time([best_seq]+omp_impls, avg_data, sizes, "OpenMP Base — tiempo", "fig_omp_base_time.png")
+    cs1  = chart_speedup(best_seq, omp_impls, avg_data, sizes, "OpenMP Base — speedup", "fig_omp_base_speedup.png",
+                         note="p=2 puede ser < 1 para N pequeño")
+    csc1 = chart_scaling(best_seq, omp_impls, avg_data, sizes, "OpenMP Base — escalabilidad", "fig_omp_base_scaling.png")
 
-    ct5 = chart_time(impls_final, avg_data, sizes,
-                     "Tiempo  |  Comparación final", "final_time.png")
-    cs5 = chart_speedup(impls_final, avg_data, REF, sizes,
-                        "Speedup  |  Mejor de cada estrategia", "final_sp.png")
+    ct2  = chart_time([best_seq]+omp_opt_impls, avg_data, sizes, "OpenMP + Compiler Opt — tiempo", "fig_omp_comp_time.png")
+    cs2  = chart_speedup(best_seq, omp_opt_impls, avg_data, sizes, "OpenMP + Compiler Opt — speedup", "fig_omp_comp_speedup.png")
+    csc2 = chart_scaling(best_seq, omp_opt_impls, avg_data, sizes, "OpenMP + Compiler Opt — escalabilidad", "fig_omp_comp_scaling.png")
 
-    for p, label in [(ct1, "serial_time"), (cs1, "serial_sp"), (cv1, "serial_vel"),
-                     (ct2, "omp_time"), (cs2, "omp_sp"), (csc, "scaling"),
-                     (ct5, "final_time"), (cs5, "final_sp")]:
-        print(f"  {os.path.basename(p)}")
+    ct3  = chart_time([best_seq]+omp_mem_opt_impls, avg_data, sizes, "OpenMP + Compiler & Memory Opt — tiempo", "fig_omp_comp_mem_time.png")
+    cs3  = chart_speedup(best_seq, omp_mem_opt_impls, avg_data, sizes, "OpenMP + Compiler & Memory Opt — speedup", "fig_omp_comp_mem_speedup.png")
+    csc3 = chart_scaling(best_seq, omp_mem_opt_impls, avg_data, sizes, "OpenMP + Compiler & Memory Opt — escalabilidad", "fig_omp_comp_mem_scaling.png")
 
-    print("\nGenerating PNG table images...")
-    # Serial raw tables
-    for impl in impls_serial:
-        build_raw_table_image(impl, all_reps, sizes, n_reps,
-            f"Mediciones individuales — {impl.label}",
-            f"raw_{impl.short_label}.png")
+    final_impls = [i for i in [best_seq, best_omp, best_omp_opt, best_omp_mem_opt] if i]
+    ct4  = chart_time(final_impls, avg_data, sizes, "Comparación final — tiempo", "fig_final_time.png")
+    cs4  = chart_speedup(best_seq, [i for i in final_impls if i != best_seq], avg_data, sizes,
+                         "Comparación final — speedup", "fig_final_speedup.png")
 
-    # Serial speedup table
-    build_speedup_table_image(impls_serial, avg_data, REF, sizes,
-        "Speedup — Variantes seriales (ref: seq_std)",
-        "speedup_serial.png")
+    c_dt = chart_density_time(density_df,     f"Densidad — tiempo      N={_size_label(DENSITY_EXPERIMENT_N)}", "fig_density_time.png") if not density_df.empty else None
+    c_dv = chart_density_velocity(density_df, f"Densidad — velocidad   N={_size_label(DENSITY_EXPERIMENT_N)}", "fig_density_velocity.png") if not density_df.empty else None
 
-    # OMP raw tables
-    for impl in impls_omp:
-        build_raw_table_image(impl, all_reps, sizes, n_reps,
-            f"Mediciones individuales — {impl.label}",
-            f"raw_{impl.short_label}.png")
-
-    build_speedup_table_image(impls_omp, avg_data, REF, sizes,
-        "Speedup — OpenMP vs seq_std",
-        "speedup_omp.png")
-
-    build_scaling_table_image(par_counts, avg_data, avg_tp, REF, sizes,
-        "omp", "Escalabilidad OpenMP (speedup, eficiencia, throughput)",
-        "scaling_omp.png")
-
-    # Final comparison table
-    build_speedup_table_image(impls_final, avg_data, REF, sizes,
-        "Comparación final — Mejor de cada estrategia",
-        "speedup_final.png")
-
-    print(f"\nBuilding workbook: {OUTPUT_PATH}")
+    print("\nBuilding workbook...")
     wb = Workbook()
-    if wb.active is not None:
-        wb.remove(wb.active)
+    if wb.active: wb.remove(wb.active)
 
-    write_sheet(wb, "1. Serial",
-                "Serial  |  seq_std  vs  seq_opt",
-                impls_serial, all_reps, REF, sizes, ct1, cs1, cv1)
+    write_sheet(wb, "0. Secuencial",
+                "Etapa 0 — Comparación de variantes secuenciales",
+                serial_impls, all_reps, avg_data,
+                Impl(SEQ, 0), sizes, ct0, cs0)
 
-    write_sheet(wb, "2. OpenMP",
-                "OpenMP  |  seq_std  vs  omp(p)  |  ref = seq_std",
-                impls_omp, all_reps, REF, sizes, ct2, cs2)
+    write_sheet(wb, "1. OMP base",
+                f"Etapa 1 — {best_seq.short_label} vs OpenMP Base",
+                [best_seq]+omp_impls, all_reps, avg_data,
+                best_seq, sizes, ct1, cs1, csc1)
 
-    write_scaling_sheet(wb, all_reps, REF, omp_counts if omp_counts else par_counts,
-                        sizes, csc, impl_name="omp")
+    write_sheet(wb, "2. OMP compilador",
+                f"Etapa 2 — {best_seq.short_label} vs OpenMP + Compiler Opt",
+                [best_seq]+omp_opt_impls, all_reps, avg_data,
+                best_seq, sizes, ct2, cs2, csc2)
 
-    if impls_mpi and len(impls_mpi) > 1:
-        ct3 = chart_time(impls_mpi, avg_data, sizes,
-                         "Tiempo  |  seq_std vs MPI(p)", "mpi_time.png")
-        cs3 = chart_speedup(impls_mpi, avg_data, REF, sizes,
-                            "Speedup  |  T(seq_std) / T(mpi, p)", "mpi_sp.png")
-        write_sheet(wb, "3b. MPI",
-                    "MPI  |  seq_std  vs  mpi(p)  |  ref = seq_std",
-                    impls_mpi, all_reps, REF, sizes, ct3, cs3)
+    write_sheet(wb, "3. OMP comp+mem",
+                f"Etapa 3 — {best_seq.short_label} vs OpenMP + Compiler & Memory Opt",
+                [best_seq]+omp_mem_opt_impls, all_reps, avg_data,
+                best_seq, sizes, ct3, cs3, csc3)
 
-    write_sheet(wb, "4. Comparacion final",
-                "Comparación final  |  Mejor de cada estrategia  |  ref = seq_std",
-                impls_final, all_reps, REF, sizes, ct5, cs5)
+    write_sheet(wb, "4. Final",
+                "Etapa 4 — Mejor de cada estrategia",
+                final_impls, all_reps, avg_data,
+                best_seq, sizes, ct4, cs4)
+
+    if not density_df.empty:
+        write_density_sheet(wb, density_df, c_dt, c_dv)
 
     wb.save(OUTPUT_PATH)
-    print(f"\nDone.")
-    print(f"  XLSX   : {OUTPUT_PATH}")
-    print(f"  Charts : {CHARTS_DIR}")
-    print(f"  Tables : {TABLES_DIR}")
-
+    print(f"\nDone.\n  XLSX: {OUTPUT_PATH}\n  Charts: {CHARTS_DIR}/")
 
 if __name__ == "__main__":
     main()
