@@ -452,7 +452,7 @@ inhibit_sleep() {
         log_warn "Failed to acquire systemd inhibitor lock."
         log_warn "Continuing benchmark without suspend protection."
 
-        return 1
+        return 0
     fi
 
     exit 0
