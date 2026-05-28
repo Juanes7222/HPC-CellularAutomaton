@@ -436,17 +436,21 @@ inhibit_sleep() {
     if ! command -v systemd-inhibit &>/dev/null; then
         log_warn "systemd-inhibit not found — machine may suspend during benchmark."
         log_warn "Consider running: sudo systemctl mask sleep.target suspend.target"
-        return 0
+        return 1
     fi
 
     log_info "Acquiring sleep/suspend inhibitor via systemd-inhibit..."
-    exec env BENCH_INHIBIT_ACTIVE=1 \
-        systemd-inhibit \
-            --what=sleep:idle \
-            --who="bench_traffic" \
-            --why="Benchmark in progress — do not suspend" \
-            --mode=block \
-            bash "${BASH_SOURCE[0]}" "$@"
+
+    export BENCH_INHIBIT_ACTIVE=1
+
+    systemd-inhibit \
+        --what=sleep:idle \
+        --who="bench_traffic" \
+        --why="Benchmark in progress — do not suspend" \
+        --mode=block \
+        bash "${BASH_SOURCE[0]}" "$@"
+
+    exit $?
 }
 
 # ---------------------------------------------------------------------------
@@ -454,7 +458,9 @@ inhibit_sleep() {
 # ---------------------------------------------------------------------------
 
 main() {
-    inhibit_sleep "$@"
+    if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; 
+        then inhibit_sleep "$@" 
+    fi
 
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
 

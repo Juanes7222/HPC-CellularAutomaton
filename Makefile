@@ -158,6 +158,21 @@ CORE_DIR = src/core
 SEQ_DIR  = src/seq
 OMP_DIR  = src/omp
 MPI_DIR  = src/mpi
+NFS_DIR       = /srv/nfs/hpc-automaton
+
+DEPLOY_BINS = \ 
+	$(BIN_SEQ) \ 
+	$(BIN_SEQ_OPT) \ 
+	$(BIN_OMP) \ 
+	$(BIN_OMP_OPT) \ 
+	$(BIN_MPI) \ 
+	$(BIN_MPI_OPT) \ 
+	$(BIN_SEQ_MEM) \ 
+	$(BIN_SEQ_MEM_OPT) \ 
+	$(BIN_OMP_MEM) \ 
+	$(BIN_OMP_MEM_OPT) \ 
+	$(BIN_TESTS) \ 
+	$(BIN_VALIDATOR)
 
 INCLUDE_CORE = -Iinclude/core
 INCLUDE_MPI  = -Iinclude/mpi
@@ -196,7 +211,7 @@ BIN_VALIDATOR   = $(BIN_DIR)/traffic_validator_mpi
 .PHONY: all clean help \
         seq seq_opt omp omp_opt mpi mpi_opt \
         seq_mem seq_mem_opt omp_mem omp_mem_opt \
-        tests validator debug
+        tests validator debug deploy
 
 all: seq seq_opt omp omp_opt mpi mpi_opt \
      seq_mem seq_mem_opt omp_mem omp_mem_opt \
@@ -269,6 +284,18 @@ debug: | $(BIN_DIR)
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
+
+deploy: all 
+	@echo "Deploying binaries and project structure to $(NFS_DIR)" 
+	@mkdir -p 
+		\ $(NFS_DIR)/bin 
+		\ $(NFS_DIR)/results/csv 
+		\ $(NFS_DIR)/results/logs 
+		\ $(NFS_DIR)/results/raw 
+		\ $(NFS_DIR)/tmp 
+	@cp $(DEPLOY_BINS) $(NFS_DIR)/bin/ 
+	@echo "Deployment completed:" 
+	@echo " -> $(NFS_DIR)/bin"
 
 clean:
 	rm -rf $(BIN_DIR)
