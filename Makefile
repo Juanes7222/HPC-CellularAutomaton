@@ -160,18 +160,18 @@ OMP_DIR  = src/omp
 MPI_DIR  = src/mpi
 NFS_DIR       = /srv/nfs/hpc-automaton
 
-DEPLOY_BINS = \ 
-	$(BIN_SEQ) \ 
-	$(BIN_SEQ_OPT) \ 
-	$(BIN_OMP) \ 
-	$(BIN_OMP_OPT) \ 
-	$(BIN_MPI) \ 
-	$(BIN_MPI_OPT) \ 
-	$(BIN_SEQ_MEM) \ 
-	$(BIN_SEQ_MEM_OPT) \ 
-	$(BIN_OMP_MEM) \ 
-	$(BIN_OMP_MEM_OPT) \ 
-	$(BIN_TESTS) \ 
+DEPLOY_BINS = \
+	$(BIN_SEQ) \
+	$(BIN_SEQ_OPT) \
+	$(BIN_OMP) \
+	$(BIN_OMP_OPT) \
+	$(BIN_MPI) \
+	$(BIN_MPI_OPT) \
+	$(BIN_SEQ_MEM) \
+	$(BIN_SEQ_MEM_OPT) \
+	$(BIN_OMP_MEM) \
+	$(BIN_OMP_MEM_OPT) \
+	$(BIN_TESTS) \
 	$(BIN_VALIDATOR)
 
 INCLUDE_CORE = -Iinclude/core
@@ -287,7 +287,7 @@ $(BIN_DIR):
 
 deploy: all 
 	@echo "Deploying binaries and project structure to $(NFS_DIR)" 
-	@mkdir -p 
+	@mkdir -p
 		\ $(NFS_DIR)/bin 
 		\ $(NFS_DIR)/results/csv 
 		\ $(NFS_DIR)/results/logs 
