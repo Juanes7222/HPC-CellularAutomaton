@@ -1,223 +1,297 @@
 # =============================================================================
-# Makefile — Traffic Cellular Automaton
+# Unified Makefile — Traffic Cellular Automaton
+#
+# Supported implementations:
+#   - Serial
+#   - OpenMP
+#   - MPI
+#   - Memory-optimized variants
+#   - Validators / tests
+#   - Debug builds with sanitizers
 #
 # Targets:
-#   make all          → todos los binarios de producción + tests
-#   make seq          → bin/traffic_seq          (serial, sin opt de compilador)
-#   make seq_opt      → bin/traffic_seq_opt      (serial, flags optimizadas)
-#   make omp          → bin/traffic_omp          (OpenMP, sin opt de compilador)
-#   make omp_opt      → bin/traffic_omp_opt      (OpenMP, flags optimizadas)
-#   make tests        → bin/traffic_tests        (validador de corrección)
-#   make debug        → builds de depuración con sanitizers (seq + omp)
-#   make clean        → elimina bin/ y todos los artefactos compilados
+#   make all          --> all production binaries + validators
 #
-# Binarios de optimización por compilador (seq_opt / omp_opt)
-# -----------------------------------------------------------
-# Se compilan desde los mismos fuentes que seq / omp. La única diferencia
-# es el conjunto de flags de compilación (CFLAGS_OPT). Esto garantiza que
-# cualquier diferencia de rendimiento sea atribuible exclusivamente al
-# compilador, no a cambios en el código fuente.
+#   Serial:
+#     make seq        --> bin/traffic_seq
+#     make seq_opt    --> bin/traffic_seq_opt
 #
-# Flags elegidas para este kernel
-# --------------------------------
-# El loop crítico de simulation.c es 100 % entero/bitwise y memory-bound
-# (~3 loads + 1 store por celda). Las flags se seleccionaron con ese perfil:
+#   OpenMP:
+#     make omp        --> bin/traffic_omp
+#     make omp_opt    --> bin/traffic_omp_opt
 #
-#   -O3                      Habilita vectorización automática, loop
-#                            transformations e inlining agresivo.
-#   -march=native            Emite AVX2 (o AVX-512 si disponible) para
-#                            procesar 8/16 int por instrucción SIMD.
-#   -funroll-loops           Reduce el overhead del branch del loop counter;
-#                            beneficia especialmente los tamaños L1-bound
-#                            (N=8K, N=64K).
-#   -flto                    Link-Time Optimization: permite inlinar
-#                            compute_next_generation() y
-#                            count_departed_cars() directamente en
-#                            simulation_step(), eliminando el overhead de
-#                            llamada en cada uno de los 1000 steps.
-#   -fno-semantic-interposition  Sin esta flag, GCC emite llamadas
-#                            indirectas a funciones visibles externamente
-#                            para soportar LD_PRELOAD. Con -flto + esta
-#                            flag, las funciones internas del TU se inlinan
-#                            sin indirección.
-#   -falign-loops=32         Alinea el inicio de cada loop a 32 bytes
-#                            (un boundary de línea de instrucción AVX2),
-#                            evitando que el cuerpo del loop cruce dos
-#                            líneas de cache de instrucciones.
-#   -fomit-frame-pointer     Libera un registro general adicional para el
-#                            allocator. Beneficio marginal en este kernel
-#                            pero sin coste observado.
+#   MPI:
+#     make mpi        --> bin/traffic_mpi
+#     make mpi_opt    --> bin/traffic_mpi_opt
 #
-#   -ffast-math OMITIDO deliberadamente: el loop crítico no usa punto
-#   flotante. avg_velocity es un cálculo de resumen (entero/double en
-#   simulation_measure). Incluir -ffast-math podría hacer los resultados
-#   de avg_velocity no reproducibles entre compiladores, complicando la
-#   validación cruzada del autómata.
+#   Memory-optimized variants:
+#     make seq_mem        --> bin/traffic_seq_mem
+#     make seq_mem_opt    --> bin/traffic_seq_mem_opt
+#     make omp_mem        --> bin/traffic_omp_mem
+#     make omp_mem_opt    --> bin/traffic_omp_mem_opt
 #
-# _POSIX_C_SOURCE=200809L
-# -------------------------
-# Expone clock_gettime / CLOCK_MONOTONIC bajo -std=c11. Definido aquí para
-# que ningún archivo fuente necesite establecerlo manualmente — las macros
-# feature-test pertenecen al tiempo de compilación, no dentro de cabeceras.
+#   Validators / tests:
+#     make tests      --> bin/traffic_tests
+#     make validator  --> bin/traffic_validator_mpi
 #
-# -Wno-unknown-pragmas
-# ----------------------
-# Suprime la advertencia inofensiva que GCC emite cuando el binario serial
-# (compilado sin -fopenmp) encuentra las directivas #pragma omp en
-# simulation.c. ISO C11 §6.10.6 permite explícitamente ignorar pragmas
-# desconocidos, por lo que este es el comportamiento correcto, no un error.
+#   Debug:
+#     make debug      --> debug binaries with AddressSanitizer/UBSan
+#
+#   Utilities:
+#     make clean      --> remove all compiled artifacts
+#     make help       --> show build targets and usage
+#
+# Compiler wrappers
+# ------------------
+# Serial and OpenMP builds use gcc directly.
+#
+# MPI builds use mpicc, which is a wrapper around gcc that automatically
+# injects the include and linker flags required by the installed MPI runtime
+# (OpenMPI, MPICH, etc.). Optimization flags are still forwarded directly
+# to the underlying compiler backend.
+#
+# Optimization philosophy
+# ------------------------
+# The simulation kernel is primarily integer/bitwise and memory-bound
+# (~3 loads + 1 store per cell). The optimization flags are selected
+# specifically for that workload profile:
+#
+#   -O3                      Enables aggressive optimization, vectorization,
+#                            loop transformations and inlining.
+#
+#   -march=native            Emits architecture-specific SIMD instructions
+#                            (AVX2 / AVX-512 when available).
+#
+#   -funroll-loops           Reduces loop branch overhead for tight kernels.
+#
+#   -flto                    Enables Link-Time Optimization and cross-TU
+#                            inlining.
+#
+#   -fno-semantic-interposition
+#                            Allows more aggressive inlining by removing
+#                            externally visible indirections.
+#
+#   -falign-loops=32         Aligns hot loops to AVX instruction boundaries.
+#
+#   -fomit-frame-pointer     Frees one additional general-purpose register.
+#
+#   -ffast-math deliberately omitted:
+#   Floating-point arithmetic is only used for summary statistics
+#   (avg_velocity). Enabling fast-math could make results non-reproducible
+#   across implementations and compilers.
+#
+# POSIX feature macros
+# ---------------------
+#   _POSIX_C_SOURCE=200809L
+#     Used for serial/OpenMP builds to expose clock_gettime.
+#
+#   _POSIX_C_SOURCE=200112L
+#     Used for MPI builds to expose posix_memalign.
+#     MPI_Wtime replaces clock_gettime in distributed execution.
+#
+# OpenMP note
+# -------------
+# OpenMP builds are enabled through -fopenmp. The same simulation core
+# is reused for both serial and threaded execution, allowing direct
+# compiler/runtime comparisons without modifying the computational kernel.
+#
+# Sanitizers
+# -----------
+# Debug builds use:
+#
+#   -fsanitize=address
+#   -fsanitize=undefined
+#
+# to detect:
+#   - out-of-bounds accesses
+#   - use-after-free
+#   - undefined behavior
+#   - integer issues
+#
+# OpenMPI may report internal allocations as memory leaks under ASan.
+# These are known runtime false positives. To suppress them:
+#
+#   export ASAN_OPTIONS=detect_leaks=0
+#
+# before executing mpirun.
 # =============================================================================
 
 
-CC          = gcc
+CC       = gcc
+MPICC    = mpicc
 
-
-CFLAGS_BASE = -Wall -Wextra -pedantic -std=c11  \
-              -D_POSIX_C_SOURCE=200809L          \
+CFLAGS_BASE = -Wall -Wextra -pedantic -std=c11 \
               -Wno-unknown-pragmas
-
 
 NOOPT_FLAGS = -O0
 
-OPT_FLAGS   = -O3                        \
-              -march=native              \
-              -funroll-loops             \
-              -flto                      \
+OPT_FLAGS   = -O3                         \
+              -march=native               \
+              -funroll-loops              \
+              -flto                       \
               -fno-semantic-interposition \
-              -falign-loops=32           \
+              -falign-loops=32            \
               -fomit-frame-pointer
 
+POSIX_SEQ_OMP = -D_POSIX_C_SOURCE=200809L
+POSIX_MPI     = -D_POSIX_C_SOURCE=200112L
 
-CFLAGS_SEQ      = $(CFLAGS_BASE) $(NOOPT_FLAGS)
-CFLAGS_SEQ_OPT  = $(CFLAGS_BASE) $(OPT_FLAGS)
-CFLAGS_OMP      = $(CFLAGS_BASE) $(NOOPT_FLAGS) -fopenmp
-CFLAGS_OMP_OPT  = $(CFLAGS_BASE) $(OPT_FLAGS)  -fopenmp
+CFLAGS_SEQ      = $(CFLAGS_BASE) $(POSIX_SEQ_OMP) $(NOOPT_FLAGS)
+CFLAGS_SEQ_OPT  = $(CFLAGS_BASE) $(POSIX_SEQ_OMP) $(OPT_FLAGS)
+
+CFLAGS_OMP      = $(CFLAGS_BASE) $(POSIX_SEQ_OMP) $(NOOPT_FLAGS) -fopenmp
+CFLAGS_OMP_OPT  = $(CFLAGS_BASE) $(POSIX_SEQ_OMP) $(OPT_FLAGS)  -fopenmp
+
+CFLAGS_MPI      = $(CFLAGS_BASE) $(POSIX_MPI) $(NOOPT_FLAGS)
+CFLAGS_MPI_OPT  = $(CFLAGS_BASE) $(POSIX_MPI) $(OPT_FLAGS)
 
 CFLAGS_DBG      = -Wall -Wextra -pedantic -std=c11 -g -O0 \
-                  -D_POSIX_C_SOURCE=200809L                \
-                  -Wno-unknown-pragmas                     \
                   -fsanitize=address,undefined
-
 
 LDFLAGS_SEQ = -lm
 LDFLAGS_OMP = -fopenmp -lm
+LDFLAGS_MPI = -lm
 
+BIN_DIR = bin
 
-INCLUDE     = -Iinclude
-SRC_DIR     = src
-BIN_DIR     = bin
+CORE_DIR = src/core
+SEQ_DIR  = src/seq
+OMP_DIR  = src/omp
+MPI_DIR  = src/mpi
 
-CORE_SRCS   = $(SRC_DIR)/road.c        \
-              $(SRC_DIR)/simulation.c  \
-              $(SRC_DIR)/cli_args.c    \
-              $(SRC_DIR)/timing.c
+INCLUDE_CORE = -Iinclude/core
+INCLUDE_MPI  = -Iinclude/mpi
 
+CORE_SRCS = $(CORE_DIR)/road.c        \
+            $(CORE_DIR)/simulation.c   \
+            $(CORE_DIR)/cli_args.c     \
+            $(CORE_DIR)/timing.c
+
+CORE_MEM_SRCS = $(CORE_DIR)/road_mem_opt.c        \
+                $(CORE_DIR)/simulation_mem_opt.c  \
+                $(CORE_DIR)/cli_args.c            \
+                $(CORE_DIR)/timing.c
+
+MPI_SRCS = $(MPI_DIR)/road_mpi.c       \
+           $(MPI_DIR)/simulation_mpi.c
 
 BIN_SEQ         = $(BIN_DIR)/traffic_seq
 BIN_SEQ_OPT     = $(BIN_DIR)/traffic_seq_opt
+
 BIN_OMP         = $(BIN_DIR)/traffic_omp
 BIN_OMP_OPT     = $(BIN_DIR)/traffic_omp_opt
-BIN_TESTS       = $(BIN_DIR)/traffic_tests
 
-
-CORE_SRCS_MEM = $(SRC_DIR)/road_mem_opt.c  \
-                $(SRC_DIR)/simulation_mem_opt.c \
-                $(SRC_DIR)/cli_args.c       \
-                $(SRC_DIR)/timing.c
+BIN_MPI         = $(BIN_DIR)/traffic_mpi
+BIN_MPI_OPT     = $(BIN_DIR)/traffic_mpi_opt
 
 BIN_SEQ_MEM     = $(BIN_DIR)/traffic_seq_mem
 BIN_SEQ_MEM_OPT = $(BIN_DIR)/traffic_seq_mem_opt
+
 BIN_OMP_MEM     = $(BIN_DIR)/traffic_omp_mem
 BIN_OMP_MEM_OPT = $(BIN_DIR)/traffic_omp_mem_opt
 
+BIN_TESTS       = $(BIN_DIR)/traffic_tests
+BIN_VALIDATOR   = $(BIN_DIR)/traffic_validator_mpi
 
+.PHONY: all clean help \
+        seq seq_opt omp omp_opt mpi mpi_opt \
+        seq_mem seq_mem_opt omp_mem omp_mem_opt \
+        tests validator debug
 
-.PHONY: all seq seq_opt omp omp_opt seq_mem seq_mem_opt omp_mem omp_mem_opt tests debug clean
-
-
-all: seq seq_opt omp omp_opt seq_mem seq_mem_opt omp_mem omp_mem_opt tests
-
+all: seq seq_opt omp omp_opt mpi mpi_opt \
+     seq_mem seq_mem_opt omp_mem omp_mem_opt \
+     tests validator
 
 seq: $(BIN_SEQ)
 
-$(BIN_SEQ): $(CORE_SRCS) $(SRC_DIR)/seq_main.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_SEQ) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
-	@echo "Built: $@  [serial, no compiler opt]"
-
+$(BIN_SEQ): $(CORE_SRCS) $(SEQ_DIR)/seq_main.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_SEQ)
 
 seq_opt: $(BIN_SEQ_OPT)
 
-$(BIN_SEQ_OPT): $(CORE_SRCS) $(SRC_DIR)/seq_main.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
-	@echo "Built: $@  [serial, -O3 -march=native -flto ...]"
-
+$(BIN_SEQ_OPT): $(CORE_SRCS) $(SEQ_DIR)/seq_main.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_SEQ)
 
 omp: $(BIN_OMP)
 
-$(BIN_OMP): $(CORE_SRCS) $(SRC_DIR)/omp_main.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
-	@echo "Built: $@  [OpenMP, no compiler opt]"
-
+$(BIN_OMP): $(CORE_SRCS) $(OMP_DIR)/omp_main.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_OMP)
 
 omp_opt: $(BIN_OMP_OPT)
 
-$(BIN_OMP_OPT): $(CORE_SRCS) $(SRC_DIR)/omp_main.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
-	@echo "Built: $@  [OpenMP, -O3 -march=native -flto ...]"
+$(BIN_OMP_OPT): $(CORE_SRCS) $(OMP_DIR)/omp_main.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_OMP)
+
+mpi: $(BIN_MPI)
+
+$(BIN_MPI): $(MPI_SRCS) $(MPI_DIR)/mpi_main.c | $(BIN_DIR)
+	$(MPICC) $(CFLAGS_MPI) $(INCLUDE_CORE) $(INCLUDE_MPI) $^ -o $@ $(LDFLAGS_MPI)
+
+mpi_opt: $(BIN_MPI_OPT)
+
+$(BIN_MPI_OPT): $(MPI_SRCS) $(MPI_DIR)/mpi_main.c | $(BIN_DIR)
+	$(MPICC) $(CFLAGS_MPI_OPT) $(INCLUDE_CORE) $(INCLUDE_MPI) $^ -o $@ $(LDFLAGS_MPI)
 
 seq_mem: $(BIN_SEQ_MEM)
-$(BIN_SEQ_MEM): $(CORE_SRCS_MEM) $(SRC_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_SEQ) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
+
+$(BIN_SEQ_MEM): $(CORE_MEM_SRCS) $(SEQ_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_SEQ)
 
 seq_mem_opt: $(BIN_SEQ_MEM_OPT)
-$(BIN_SEQ_MEM_OPT): $(CORE_SRCS_MEM) $(SRC_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_SEQ)
+
+$(BIN_SEQ_MEM_OPT): $(CORE_MEM_SRCS) $(SEQ_DIR)/seq_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_SEQ)
 
 omp_mem: $(BIN_OMP_MEM)
-$(BIN_OMP_MEM): $(CORE_SRCS_MEM) $(SRC_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
+
+$(BIN_OMP_MEM): $(CORE_MEM_SRCS) $(OMP_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_OMP)
 
 omp_mem_opt: $(BIN_OMP_MEM_OPT)
-$(BIN_OMP_MEM_OPT): $(CORE_SRCS_MEM) $(SRC_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
 
+$(BIN_OMP_MEM_OPT): $(CORE_MEM_SRCS) $(OMP_DIR)/omp_main_mem_opt.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_OMP)
 
 tests: $(BIN_TESTS)
 
-$(BIN_TESTS): $(CORE_SRCS) $(SRC_DIR)/validator.c $(SRC_DIR)/validator_main.c | $(BIN_DIR)
-	$(CC) $(CFLAGS_OMP_OPT) $(INCLUDE) $^ -o $@ $(LDFLAGS_OMP)
-	@echo "Built: $@  [validator, compiled with OPT_FLAGS for speed]"
+$(BIN_TESTS): $(CORE_SRCS) $(CORE_DIR)/validator.c $(CORE_DIR)/validator_main.c | $(BIN_DIR)
+	$(CC) $(CFLAGS_SEQ_OPT) $(INCLUDE_CORE) $^ -o $@ $(LDFLAGS_SEQ)
 
+validator: $(BIN_VALIDATOR)
+
+$(BIN_VALIDATOR): $(MPI_SRCS) $(MPI_DIR)/validator_mpi.c $(MPI_DIR)/validator_mpi_main.c | $(BIN_DIR)
+	$(MPICC) $(CFLAGS_MPI_OPT) $(INCLUDE_CORE) $(INCLUDE_MPI) $^ -o $@ $(LDFLAGS_MPI)
 
 debug: | $(BIN_DIR)
-	$(CC) $(CFLAGS_DBG) $(INCLUDE) $(CORE_SRCS) $(SRC_DIR)/seq_main.c \
-	    -o $(BIN_DIR)/traffic_seq_debug $(LDFLAGS_SEQ)
-	$(CC) $(CFLAGS_DBG) -fopenmp $(INCLUDE) $(CORE_SRCS) $(SRC_DIR)/omp_main.c \
-	    -o $(BIN_DIR)/traffic_omp_debug $(LDFLAGS_OMP)
-	@echo "Debug builds ready: traffic_seq_debug  traffic_omp_debug"
-
+	$(CC) $(CFLAGS_DBG) $(INCLUDE_CORE) $(CORE_SRCS) $(SEQ_DIR)/seq_main.c -o $(BIN_DIR)/traffic_seq_debug $(LDFLAGS_SEQ)
+	$(CC) $(CFLAGS_DBG) -fopenmp $(INCLUDE_CORE) $(CORE_SRCS) $(OMP_DIR)/omp_main.c -o $(BIN_DIR)/traffic_omp_debug $(LDFLAGS_OMP)
+	$(MPICC) $(CFLAGS_DBG) $(INCLUDE_CORE) $(INCLUDE_MPI) $(MPI_SRCS) $(MPI_DIR)/mpi_main.c -o $(BIN_DIR)/traffic_mpi_debug $(LDFLAGS_MPI)
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-
 clean:
 	rm -rf $(BIN_DIR)
-	@echo "Cleaned."
-
 
 help:
 	@echo ""
-	@echo "  make all        → seq  seq_opt  omp  omp_opt  seq_mem  seq_mem_opt  omp_mem  omp_mem_opt  tests"
-	@echo "  make seq        → bin/traffic_seq        (serial, -O0)"
-	@echo "  make seq_opt    → bin/traffic_seq_opt    (serial, -O3 + flags)"
-	@echo "  make omp        → bin/traffic_omp        (OpenMP, -O0)"
-	@echo "  make omp_opt    → bin/traffic_omp_opt    (OpenMP, -O3 + flags)"
-	@echo "  make seq_mem    → bin/traffic_seq_mem    (serial, memory-optimized)"
-	@echo "  make seq_mem_opt → bin/traffic_seq_mem_opt (serial, memory-optimized with compiler flags)"
-	@echo "  make omp_mem    → bin/traffic_omp_mem    (OpenMP, memory-optimized)"
-	@echo "  make omp_mem_opt → bin/traffic_omp_mem_opt (OpenMP, memory-optimized with compiler flags)"
-	@echo "  make tests      → bin/traffic_tests      (validador)"
-	@echo "  make debug      → builds con -fsanitize=address,undefined"
-	@echo "  make clean      → elimina bin/"
+	@echo "  make all          --> seq seq_opt omp omp_opt mpi mpi_opt seq_mem seq_mem_opt omp_mem omp_mem_opt tests validator"
+	@echo "  make seq          --> bin/traffic_seq              (serial, -O0)"
+	@echo "  make seq_opt      --> bin/traffic_seq_opt          (serial, -O3 + flags)"
+	@echo "  make omp          --> bin/traffic_omp              (OpenMP, -O0)"
+	@echo "  make omp_opt      --> bin/traffic_omp_opt          (OpenMP, -O3 + flags)"
+	@echo "  make mpi          --> bin/traffic_mpi              (MPI, -O0)"
+	@echo "  make mpi_opt      --> bin/traffic_mpi_opt          (MPI, -O3 + flags)"
+	@echo "  make seq_mem      --> bin/traffic_seq_mem          (serial, memory-optimized)"
+	@echo "  make seq_mem_opt  --> bin/traffic_seq_mem_opt      (serial, memory-optimized + flags)"
+	@echo "  make omp_mem      --> bin/traffic_omp_mem          (OpenMP, memory-optimized)"
+	@echo "  make omp_mem_opt  --> bin/traffic_omp_mem_opt      (OpenMP, memory-optimized + flags)"
+	@echo "  make tests        --> bin/traffic_tests            (correctness validator)"
+	@echo "  make validator    --> bin/traffic_validator_mpi    (MPI validator)"
+	@echo "  make debug        --> bin/traffic_seq_debug, bin/traffic_omp_debug, bin/traffic_mpi_debug"
+	@echo "  make clean        --> removes bin/"
+	@echo ""
+	@echo "  Usage:"
+	@echo "    mpirun -np <P> bin/traffic_mpi_opt <N> <density> <max_warmup> <measure_steps>"
+	@echo "    mpirun -np <P> bin/traffic_validator_mpi"
 	@echo ""
