@@ -63,6 +63,7 @@ RUN_SEQ_MEM_OPT=false
 RUN_OMP_MEM=false
 RUN_OMP_MEM_OPT=false
 INHIBIT_SLEEP=true
+INTERNAL_RUN=false
 
 
 usage() {
@@ -119,6 +120,11 @@ parse_args() {
 
             --no-inhibit)
                 INHIBIT_SLEEP=false
+                shift
+                ;;
+
+            --internal-run)
+                INTERNAL_RUN=true
                 shift
                 ;;
 
@@ -223,32 +229,47 @@ parse_args() {
 
 want_impl() {
     case "$1" in
-        traffic_seq)        [[ "${RUN_SEQ}" == true ]] ;;
-        traffic_seq_opt)    [[ "${RUN_SEQ_OPT}" == true ]] ;;
-        traffic_omp)        [[ "${RUN_OMP}" == true ]] ;;
-        traffic_omp_opt)    [[ "${RUN_OMP_OPT}" == true ]] ;;
-        traffic_seq_mem)    [[ "${RUN_SEQ_MEM}" == true ]] ;;
-        traffic_seq_mem_opt) [[ "${RUN_SEQ_MEM_OPT}" == true ]] ;;
-        traffic_omp_mem)    [[ "${RUN_OMP_MEM}" == true ]] ;;
-        traffic_omp_mem_opt) [[ "${RUN_OMP_MEM_OPT}" == true ]] ;;
-        *) return 1 ;;
+        traffic_seq)
+            [[ "${RUN_SEQ}" == true ]] && return 0 || return 1
+            ;;
+        traffic_seq_opt)
+            [[ "${RUN_SEQ_OPT}" == true ]] && return 0 || return 1
+            ;;
+        traffic_omp)
+            [[ "${RUN_OMP}" == true ]] && return 0 || return 1
+            ;;
+        traffic_omp_opt)
+            [[ "${RUN_OMP_OPT}" == true ]] && return 0 || return 1
+            ;;
+        traffic_seq_mem)
+            [[ "${RUN_SEQ_MEM}" == true ]] && return 0 || return 1
+            ;;
+        traffic_seq_mem_opt)
+            [[ "${RUN_SEQ_MEM_OPT}" == true ]] && return 0 || return 1
+            ;;
+        traffic_omp_mem)
+            [[ "${RUN_OMP_MEM}" == true ]] && return 0 || return 1
+            ;;
+        traffic_omp_mem_opt)
+            [[ "${RUN_OMP_MEM_OPT}" == true ]] && return 0 || return 1
+            ;;
+        *)
+            return 1
+            ;;
     esac
 }
-
 
 selected_impls_string() {
     local impls=()
 
-
-    want_impl traffic_seq         && impls+=("seq")
-    want_impl traffic_seq_opt     && impls+=("seq_opt")
-    want_impl traffic_omp         && impls+=("omp")
-    want_impl traffic_omp_opt     && impls+=("omp_opt")
-    want_impl traffic_seq_mem     && impls+=("seq_mem")
-    want_impl traffic_seq_mem_opt && impls+=("seq_mem_opt")
-    want_impl traffic_omp_mem     && impls+=("omp_mem")
-    want_impl traffic_omp_mem_opt && impls+=("omp_mem_opt")
-
+    if want_impl traffic_seq; then impls+=("seq"); fi
+    if want_impl traffic_seq_opt; then impls+=("seq_opt"); fi
+    if want_impl traffic_omp; then impls+=("omp"); fi
+    if want_impl traffic_omp_opt; then impls+=("omp_opt"); fi
+    if want_impl traffic_seq_mem; then impls+=("seq_mem"); fi
+    if want_impl traffic_seq_mem_opt; then impls+=("seq_mem_opt"); fi
+    if want_impl traffic_omp_mem; then impls+=("omp_mem"); fi
+    if want_impl traffic_omp_mem_opt; then impls+=("omp_mem_opt"); fi
 
     echo "${impls[*]:-none}"
 }
@@ -446,19 +467,34 @@ build_scaling_configurations() {
     local -n out_array="$1"
     out_array=()
 
-
     for threads in "${ALL_THREAD_COUNTS[@]}"; do
         for road_length in "${N_VALUES[@]}"; do
             if [[ "${threads}" -eq 0 ]]; then
-                want_impl traffic_seq         && add_cfg out_array traffic_seq         "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_seq_opt     && add_cfg out_array traffic_seq_opt     "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_seq_mem     && add_cfg out_array traffic_seq_mem     "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_seq_mem_opt && add_cfg out_array traffic_seq_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                if want_impl traffic_seq; then
+                    add_cfg out_array traffic_seq "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_seq_opt; then
+                    add_cfg out_array traffic_seq_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_seq_mem; then
+                    add_cfg out_array traffic_seq_mem "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_seq_mem_opt; then
+                    add_cfg out_array traffic_seq_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
             else
-                want_impl traffic_omp         && add_cfg out_array traffic_omp         "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_omp_opt     && add_cfg out_array traffic_omp_opt     "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_omp_mem     && add_cfg out_array traffic_omp_mem     "${threads}" "${road_length}" "${SCALING_DENSITY}"
-                want_impl traffic_omp_mem_opt && add_cfg out_array traffic_omp_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                if want_impl traffic_omp; then
+                    add_cfg out_array traffic_omp "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_omp_opt; then
+                    add_cfg out_array traffic_omp_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_omp_mem; then
+                    add_cfg out_array traffic_omp_mem "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
+                if want_impl traffic_omp_mem_opt; then
+                    add_cfg out_array traffic_omp_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                fi
             fi
         done
     done
@@ -469,19 +505,34 @@ build_density_configurations() {
     local -n out_array="$1"
     out_array=()
 
-
     for threads in "${DENSITY_EXPERIMENT_THREADS[@]}"; do
         for density in "${DENSITY_VALUES[@]}"; do
             if [[ "${threads}" -eq 0 ]]; then
-                want_impl traffic_seq         && add_cfg out_array traffic_seq         "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_seq_opt     && add_cfg out_array traffic_seq_opt     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_seq_mem     && add_cfg out_array traffic_seq_mem     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_seq_mem_opt && add_cfg out_array traffic_seq_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                if want_impl traffic_seq; then
+                    add_cfg out_array traffic_seq "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_seq_opt; then
+                    add_cfg out_array traffic_seq_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_seq_mem; then
+                    add_cfg out_array traffic_seq_mem "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_seq_mem_opt; then
+                    add_cfg out_array traffic_seq_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
             else
-                want_impl traffic_omp         && add_cfg out_array traffic_omp         "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_omp_opt     && add_cfg out_array traffic_omp_opt     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_omp_mem     && add_cfg out_array traffic_omp_mem     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
-                want_impl traffic_omp_mem_opt && add_cfg out_array traffic_omp_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                if want_impl traffic_omp; then
+                    add_cfg out_array traffic_omp "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_omp_opt; then
+                    add_cfg out_array traffic_omp_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_omp_mem; then
+                    add_cfg out_array traffic_omp_mem "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
+                if want_impl traffic_omp_mem_opt; then
+                    add_cfg out_array traffic_omp_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                fi
             fi
         done
     done
@@ -493,6 +544,11 @@ run_benchmark() {
     build_scaling_configurations scaling_configs
     build_density_configurations density_configs
     all_configs=("${scaling_configs[@]}" "${density_configs[@]}")
+
+    if [[ "${#all_configs[@]}" -eq 0 ]]; then
+        log_warn "No configurations selected. Nothing to run."
+        return 0
+    fi
 
 
     log_section "Starting benchmark: ${#all_configs[@]} configurations x ${REPETITIONS} repetitions"
@@ -598,53 +654,42 @@ print_banner() {
     echo -e "${RESET}"
 }
 
-inhibit_sleep() {
-    [[ -n "${BENCH_INHIBIT_ACTIVE:-}" ]] && return 0
+maybe_run_with_inhibit() {
+    if [[ "${INTERNAL_RUN}" == true ]]; then
+        return 0
+    fi
+
+    if [[ "${INHIBIT_SLEEP}" != true ]]; then
+        log_warn "Sleep/suspend inhibition is disabled. The machine may suspend during the benchmark, which can lead to very long runtimes and skewed results. Use --no-inhibit to disable this warning."
+        return 0
+    fi
 
     if ! command -v systemd-inhibit &>/dev/null; then
         log_warn "systemd-inhibit not found — machine may suspend during benchmark."
         return 0
     fi
 
-    log_info "Acquiring sleep/suspend inhibitor via systemd-inhibit..."
-
+    log_info "Attempting to inhibit sleep/suspend during benchmark..."
     export BENCH_INHIBIT_ACTIVE=1
 
-    if systemd-inhibit \
+    exec systemd-inhibit \
         --what=sleep:idle \
         --who="bench_traffic" \
         --why="Benchmark in progress — do not suspend" \
         --mode=block \
-        bash "$(realpath "${BASH_SOURCE[0]}")" "$@"
-    then
-        exit 0
-    fi
-
-    log_warn "Failed to acquire sleep/suspend inhibitor lock."
-    log_warn "Continuing benchmark without suspend protection."
+        bash "$(realpath "${BASH_SOURCE[0]}")" --internal-run "$@"
 }
-
 
 main() {
     parse_args "$@"
 
-
-    if [[ "${INHIBIT_SLEEP}" == true ]]; then
-        log_info "Attempting to inhibit sleep/suspend during benchmark..."
-        if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; then
-            inhibit_sleep "$@"
-        fi
-    else
-        log_warn "Sleep/suspend inhibition is disabled. The machine may suspend during the benchmark, which can lead to very long runtimes and skewed results. Use --no-inhibit to disable this warning."
-    fi
+    maybe_run_with_inhibit "$@"
 
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
-
 
     if ! binaries_are_built; then
         compile_all_binaries
     fi
-
 
     log_info "Running validation tests..."
     if ! "${BIN_TESTS}" >/dev/null 2>&1; then
@@ -653,32 +698,25 @@ main() {
     fi
     log_ok "All validation tests passed."
 
-
     setup_csv "${RESULTS_DIR}" "${CSV}" "${CSV_HEADER}"
 
-
     sudo -v
-
 
     local sudo_keeper_pid
     ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
     sudo_keeper_pid=$!
-
 
     trap '
         [[ -n "${sudo_keeper_pid:-}" ]] && kill "${sudo_keeper_pid}" 2>/dev/null
         restore_system
     ' EXIT
 
-
     optimize_system
     print_banner
     run_benchmark
 
-
     echo ""
     print_raw_averages
 }
-
 
 main "$@"
