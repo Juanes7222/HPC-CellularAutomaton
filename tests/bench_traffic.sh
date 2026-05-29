@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# bench_traffic.sh  --  Traffic Automaton OpenMP Benchmark
+# bench_traffic.sh  --  Traffic Automaton Benchmark
 #
 # Runs all measurement combinations and writes every result to a single CSV.
 # No analysis is performed here; that is the responsibility of report.py.
@@ -44,14 +44,17 @@
 #   [FIX-7]  DENSITY_EXPERIMENT_THREADS expanded to (0 4 8 12).
 #   [NEW]    Four-binary support: seq, seq_opt, omp, omp_opt.
 #
-# Usage:
-#   ./tests/benchmarks/bench_traffic.sh [machine_flag]
-#   machine_flag defaults to "machine1"
+# Runs selected measurement combinations and writes every result to a single CSV.
+# No analysis is performed here; that is the responsibility of report.py.
+#
+# Usage examples:
+#   ./tests/benchmarks/bench_traffic.sh --machine machine1 --secuencial --secuencial-opt
+#   ./tests/benchmarks/bench_traffic.sh --machine machine2 --omp --omp-opt
+#   ./tests/benchmarks/bench_traffic.sh machine1 --all
 #
 # Output:
 #   tests/<machine_flag>/results_traffic/data.csv
 #
-# Requires: bench_utils.sh in the same directory.
 # =============================================================================
 
 set -euo pipefail
@@ -64,17 +67,185 @@ cd "${PROJECT_ROOT}"
 # shellcheck source=tests/bench_utils.sh
 source "tests/bench_utils.sh"
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
+MACHINE_FLAG="machine1"
 
-MACHINE_FLAG="${1:-machine1}"
+RUN_ALL=true
+RUN_SEQ=false
+RUN_SEQ_OPT=false
+RUN_OMP=false
+RUN_OMP_OPT=false
+RUN_SEQ_MEM=false
+RUN_SEQ_MEM_OPT=false
+RUN_OMP_MEM=false
+RUN_OMP_MEM_OPT=false
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./tests/benchmarks/bench_traffic.sh [options]
+
+Options:
+  --machine NAME            Machine name used in tests/NAME/results_traffic
+  --secuencial              Run traffic_seq
+  --secuencial-opt          Run traffic_seq_opt
+  --omp                     Run traffic_omp
+  --omp-opt                 Run traffic_omp_opt
+  --secuencial-mem          Run traffic_seq_mem
+  --secuencial-mem-opt      Run traffic_seq_mem_opt
+  --omp-mem                 Run traffic_omp_mem
+  --omp-mem-opt             Run traffic_omp_mem_opt
+  --all                     Run every implementation
+  -h, --help                Show this help
+
+Compatibility:
+  You may also pass the machine name as the first positional argument.
+EOF
+}
+
+enable_selected_mode() {
+    RUN_ALL=false
+}
+
+parse_args() {
+    # Backward compatibility: if first arg does not start with '-', treat it as machine.
+    if [[ $# -gt 0 && "${1}" != -* ]]; then
+        MACHINE_FLAG="$1"
+        shift
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --machine)
+                MACHINE_FLAG="${2:?Missing value for --machine}"
+                shift 2
+                ;;
+
+            --machine=*)
+                MACHINE_FLAG="${1#*=}"
+                shift
+                ;;
+
+            --secuencial|--seq)
+                enable_selected_mode
+                RUN_SEQ=true
+                shift
+                ;;
+
+            --secuencial-opt|--seq-opt)
+                enable_selected_mode
+                RUN_SEQ_OPT=true
+                shift
+                ;;
+
+            --omp)
+                enable_selected_mode
+                RUN_OMP=true
+                shift
+                ;;
+
+            --omp-opt)
+                enable_selected_mode
+                RUN_OMP_OPT=true
+                shift
+                ;;
+
+            --secuencial-mem|--seq-mem)
+                enable_selected_mode
+                RUN_SEQ_MEM=true
+                shift
+                ;;
+
+            --secuencial-mem-opt|--seq-mem-opt)
+                enable_selected_mode
+                RUN_SEQ_MEM_OPT=true
+                shift
+                ;;
+
+            --omp-mem|--omp-mem)
+                enable_selected_mode
+                RUN_OMP_MEM=true
+                shift
+                ;;
+
+            --omp-mem-opt|--omp-mem-opt)
+                enable_selected_mode
+                RUN_OMP_MEM_OPT=true
+                shift
+                ;;
+
+            --all)
+                RUN_ALL=true
+                RUN_SEQ=true
+                RUN_SEQ_OPT=true
+                RUN_OMP=true
+                RUN_OMP_OPT=true
+                RUN_SEQ_MEM=true
+                RUN_SEQ_MEM_OPT=true
+                RUN_OMP_MEM=true
+                RUN_OMP_MEM_OPT=true
+                shift
+                ;;
+
+            -h|--help)
+                usage
+                exit 0
+                ;;
+
+            *)
+                log_error "Unknown argument: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    # Default behavior: if nothing explicit was selected, run everything.
+    if [[ "${RUN_ALL}" == true ]]; then
+        RUN_SEQ=true
+        RUN_SEQ_OPT=true
+        RUN_OMP=true
+        RUN_OMP_OPT=true
+        RUN_SEQ_MEM=true
+        RUN_SEQ_MEM_OPT=true
+        RUN_OMP_MEM=true
+        RUN_OMP_MEM_OPT=true
+    fi
+}
+
+want_impl() {
+    case "$1" in
+        traffic_seq)        [[ "${RUN_SEQ}" == true ]] ;;
+        traffic_seq_opt)    [[ "${RUN_SEQ_OPT}" == true ]] ;;
+        traffic_omp)        [[ "${RUN_OMP}" == true ]] ;;
+        traffic_omp_opt)    [[ "${RUN_OMP_OPT}" == true ]] ;;
+        traffic_seq_mem)    [[ "${RUN_SEQ_MEM}" == true ]] ;;
+        traffic_seq_mem_opt) [[ "${RUN_SEQ_MEM_OPT}" == true ]] ;;
+        traffic_omp_mem)    [[ "${RUN_OMP_MEM}" == true ]] ;;
+        traffic_omp_mem_opt) [[ "${RUN_OMP_MEM_OPT}" == true ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+selected_impls_string() {
+    local impls=()
+
+    want_impl traffic_seq         && impls+=("seq")
+    want_impl traffic_seq_opt     && impls+=("seq_opt")
+    want_impl traffic_omp         && impls+=("omp")
+    want_impl traffic_omp_opt     && impls+=("omp_opt")
+    want_impl traffic_seq_mem     && impls+=("seq_mem")
+    want_impl traffic_seq_mem_opt && impls+=("seq_mem_opt")
+    want_impl traffic_omp_mem     && impls+=("omp_mem")
+    want_impl traffic_omp_mem_opt && impls+=("omp_mem_opt")
+
+    echo "${impls[*]:-none}"
+}
+
 
 BIN_DIR="bin"
 RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic"
 CSV="${RESULTS_DIR}/data.csv"
 
-# Four binaries — built by 'make all'
 BIN_SEQ="${BIN_DIR}/traffic_seq"
 BIN_SEQ_OPT="${BIN_DIR}/traffic_seq_opt"
 BIN_OMP="${BIN_DIR}/traffic_omp"
@@ -85,10 +256,8 @@ BIN_SEQ_MEM_OPT="${BIN_DIR}/traffic_seq_mem_opt"
 BIN_OMP_MEM="${BIN_DIR}/traffic_omp_mem"
 BIN_OMP_MEM_OPT="${BIN_DIR}/traffic_omp_mem_opt"
 
-# Thread counts to benchmark. 0 = sequential binary.
 ALL_THREAD_COUNTS=(0 2 4 6 8 12)
 
-# Number of timed steps per measurement (warmup excluded from the clock).
 MEASURE_STEPS=1000
 
 # N values for the scaling experiment — one per memory level.
@@ -105,11 +274,8 @@ N_VALUES=(8000 64000 500000 2000000 5000000 10000000)
 SCALING_DENSITY="0.50"
 
 # Density experiment parameters.
-# [FIX-1] N=20M (160 MB) is intentionally NOT in N_VALUES — dedicated
-# DRAM-bound point for the density sweep. The dedup guard (row_already_recorded)
-# prevents re-running rows on --resume but does NOT link rows between experiments.
+# N=20M (160 MB) is intentionally NOT in N_VALUES — dedicated DRAM-bound point.
 DENSITY_EXPERIMENT_N=20000000
-# [FIX-7] t=4 and t=8 added for density × threads interaction analysis.
 DENSITY_EXPERIMENT_THREADS=(0 4 8 12)
 DENSITY_VALUES=(0.10 0.30 0.50 0.70 0.90)
 
@@ -121,9 +287,6 @@ BENCH_CPU_SINGLE="0"
 
 CSV_HEADER="impl,threads,road_length,density,repetition,wall_time_ms,avg_velocity"
 
-# ---------------------------------------------------------------------------
-# Compilation
-# ---------------------------------------------------------------------------
 
 binaries_are_built() {
     [[ -x "${BIN_SEQ}"         && -x "${BIN_SEQ_OPT}"     &&
@@ -144,20 +307,12 @@ compile_all_binaries() {
     fi
 }
 
-# ---------------------------------------------------------------------------
-# Warmup ceiling
-# ---------------------------------------------------------------------------
-
 warmup_ceiling_for() {
     local road_length="$1"
     local ceiling=$(( road_length / 10 ))
     [[ "${ceiling}" -lt 2000 ]] && ceiling=2000
     echo "${ceiling}"
 }
-
-# ---------------------------------------------------------------------------
-# Resume support
-# ---------------------------------------------------------------------------
 
 row_already_recorded() {
     local impl="$1" threads="$2" road_length="$3" density="$4" rep="$5"
@@ -169,12 +324,6 @@ row_already_recorded() {
         "${CSV}" 2>/dev/null
 }
 
-# ---------------------------------------------------------------------------
-# Single measurement
-# ---------------------------------------------------------------------------
-
-# Dispatches to the correct binary based on impl name and thread count.
-# Echoes "wall_time_ms avg_velocity". Caller splits the two fields.
 run_binary() {
     local impl="$1" road_length="$2" density="$3" threads="$4"
     local max_warmup exit_code=0 output
@@ -231,32 +380,29 @@ run_binary() {
             ;;
         *)
             log_error "Unknown impl: '${impl}'"
-            echo "0.000 0.000000"; return
+            echo "0.000 0.000000"
+            return
             ;;
     esac
 
     if [[ "${exit_code}" -ne 0 || -z "${output}" ]]; then
         log_error "Binary failed (impl=${impl} N=${road_length} d=${density} t=${threads})"
-        echo "0.000 0.000000"; return
+        echo "0.000 0.000000"
+        return
     fi
 
     local ms velocity
-    ms=$(      echo "${output}" | awk '{print $1}')
+    ms=$(echo "${output}" | awk '{print $1}')
     velocity=$(echo "${output}" | awk '{print $2}')
 
-    # [FIX-6] (\.[0-9]*)? accepts "0", "0.", "123" as well as "0.000"
-    if ! [[ "${ms}"       =~ ^[0-9]+(\.[0-9]*)?$ && \
-            "${velocity}" =~ ^[0-9]+(\.[0-9]*)?$ ]]; then
+    if ! [[ "${ms}" =~ ^[0-9]+(\.[0-9]*)?$ && "${velocity}" =~ ^[0-9]+(\.[0-9]*)?$ ]]; then
         log_error "Unexpected binary output: '${output}'"
-        echo "0.000 0.000000"; return
+        echo "0.000 0.000000"
+        return
     fi
 
     echo "${ms} ${velocity}"
 }
-
-# ---------------------------------------------------------------------------
-# CSV writing
-# ---------------------------------------------------------------------------
 
 append_result_row() {
     local impl="$1" threads="$2" road_length="$3" \
@@ -267,50 +413,51 @@ append_result_row() {
     sync
 }
 
-# ---------------------------------------------------------------------------
-# Configuration list builders
-# ---------------------------------------------------------------------------
+add_cfg() {
+    local -n arr="$1"
+    local impl="$2" threads="$3" road_length="$4" density="$5"
+    arr+=("${impl}|${threads}|${road_length}|${density}")
+}
 
-# Scaling experiment: seq + seq_opt at t=0; omp + omp_opt at t>0.
-# Each thread count runs both the unoptimised and optimised binary so that
-# the compiler-opt speedup can be read at every (N, p) combination.
+# Scaling experiment: selected implementations at all thread counts.
 build_scaling_configurations() {
     local -n out_array="$1"
     out_array=()
+
     for threads in "${ALL_THREAD_COUNTS[@]}"; do
         for road_length in "${N_VALUES[@]}"; do
             if [[ "${threads}" -eq 0 ]]; then
-                out_array+=("traffic_seq|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_seq_opt|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_seq_mem|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_seq_mem_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+                want_impl traffic_seq         && add_cfg out_array traffic_seq         "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_seq_opt     && add_cfg out_array traffic_seq_opt     "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_seq_mem     && add_cfg out_array traffic_seq_mem     "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_seq_mem_opt && add_cfg out_array traffic_seq_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
             else
-                out_array+=("traffic_omp|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_omp_opt|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_omp_mem|${threads}|${road_length}|${SCALING_DENSITY}")
-                out_array+=("traffic_omp_mem_opt|${threads}|${road_length}|${SCALING_DENSITY}")
+                want_impl traffic_omp         && add_cfg out_array traffic_omp         "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_omp_opt     && add_cfg out_array traffic_omp_opt     "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_omp_mem     && add_cfg out_array traffic_omp_mem     "${threads}" "${road_length}" "${SCALING_DENSITY}"
+                want_impl traffic_omp_mem_opt && add_cfg out_array traffic_omp_mem_opt "${threads}" "${road_length}" "${SCALING_DENSITY}"
             fi
         done
     done
 }
 
-# Density experiment: seq + seq_opt at t=0; omp_opt at t>0.
-# Only omp_opt (not omp) is used for the parallel density sweep because the
-# density experiment is primarily about application behaviour vs. density,
-# not about compiler effects; omp_opt gives the most representative
-# parallel performance at each density.
+# Density experiment: selected implementations at the density sweep points.
 build_density_configurations() {
     local -n out_array="$1"
     out_array=()
+
     for threads in "${DENSITY_EXPERIMENT_THREADS[@]}"; do
         for density in "${DENSITY_VALUES[@]}"; do
             if [[ "${threads}" -eq 0 ]]; then
-                out_array+=("traffic_seq|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
-                out_array+=("traffic_seq_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
-                out_array+=("traffic_seq_mem_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+                want_impl traffic_seq         && add_cfg out_array traffic_seq         "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_seq_opt     && add_cfg out_array traffic_seq_opt     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_seq_mem     && add_cfg out_array traffic_seq_mem     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_seq_mem_opt && add_cfg out_array traffic_seq_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
             else
-                out_array+=("traffic_omp_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
-                out_array+=("traffic_omp_mem_opt|${threads}|${DENSITY_EXPERIMENT_N}|${density}")
+                want_impl traffic_omp         && add_cfg out_array traffic_omp         "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_omp_opt     && add_cfg out_array traffic_omp_opt     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_omp_mem     && add_cfg out_array traffic_omp_mem     "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
+                want_impl traffic_omp_mem_opt && add_cfg out_array traffic_omp_mem_opt "${threads}" "${DENSITY_EXPERIMENT_N}" "${density}"
             fi
         done
     done
@@ -333,10 +480,10 @@ run_benchmark() {
 
         for config in "${all_configs[@]}"; do
             local impl threads road_length density
-            impl=$(       echo "${config}" | cut -d'|' -f1)
-            threads=$(    echo "${config}" | cut -d'|' -f2)
+            impl=$(echo "${config}" | cut -d'|' -f1)
+            threads=$(echo "${config}" | cut -d'|' -f2)
             road_length=$(echo "${config}" | cut -d'|' -f3)
-            density=$(    echo "${config}" | cut -d'|' -f4)
+            density=$(echo "${config}" | cut -d'|' -f4)
 
             if [[ "$(row_already_recorded "${impl}" "${threads}" \
                     "${road_length}" "${density}" "${rep}")" -gt 0 ]]; then
@@ -349,7 +496,7 @@ run_benchmark() {
 
             local output ms velocity
             output=$(run_binary "${impl}" "${road_length}" "${density}" "${threads}")
-            ms=$(      echo "${output}" | awk '{print $1}')
+            ms=$(echo "${output}" | awk '{print $1}')
             velocity=$(echo "${output}" | awk '{print $2}')
 
             printf "%s ms  v=%.4f\n" "${ms}" "${velocity}"
@@ -360,12 +507,7 @@ run_benchmark() {
     done
 }
 
-# ---------------------------------------------------------------------------
-# End-of-run summary
-# ---------------------------------------------------------------------------
-
 print_raw_averages() {
-    # [FIX-5] Guard against RESULTS_DIR not existing when called standalone.
     mkdir -p "${RESULTS_DIR}"
     local summary="${RESULTS_DIR}/summary_raw.txt"
 
@@ -400,10 +542,6 @@ print_raw_averages() {
     log_ok "Full dataset : ${CSV}"
 }
 
-# ---------------------------------------------------------------------------
-# Banner
-# ---------------------------------------------------------------------------
-
 print_banner() {
     echo -e "${BOLD}"
     echo "================================================================"
@@ -412,6 +550,7 @@ print_banner() {
     echo "   Host             : $(cat /etc/hostname 2>/dev/null \
                                     || cat /proc/sys/kernel/hostname 2>/dev/null \
                                     || echo 'unknown')"
+    echo "   Selected impls   : $(selected_impls_string)"
     echo "   N values         : ${N_VALUES[*]}"
     echo "   Thread counts    : ${ALL_THREAD_COUNTS[*]}"
     echo "   Measure steps    : ${MEASURE_STEPS}"
@@ -425,10 +564,6 @@ print_banner() {
     echo "================================================================"
     echo -e "${RESET}"
 }
-
-# ---------------------------------------------------------------------------
-# Sleep / suspend inhibitor
-# ---------------------------------------------------------------------------
 
 inhibit_sleep() {
     [[ -n "${BENCH_INHIBIT_ACTIVE:-}" ]] && return 0
@@ -451,20 +586,17 @@ inhibit_sleep() {
 
         log_warn "Failed to acquire systemd inhibitor lock."
         log_warn "Continuing benchmark without suspend protection."
-
         return 0
     fi
 
     exit 0
 }
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 main() {
-    if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; 
-        then inhibit_sleep "$@" 
+    parse_args "$@"
+
+    if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; then
+        inhibit_sleep "$@"
     fi
 
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
@@ -484,14 +616,10 @@ main() {
 
     sudo -v
 
-    # [FIX-3] Declare local BEFORE the background fork so $! is captured
-    # correctly in all bash versions.
     local sudo_keeper_pid
     ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
     sudo_keeper_pid=$!
 
-    # [FIX-4] Set the EXIT trap HERE, before optimize_system, so that
-    # restore_system runs even if optimize_system fails mid-setup.
     trap 'kill "${sudo_keeper_pid}" 2>/dev/null; restore_system' EXIT
 
     optimize_system
