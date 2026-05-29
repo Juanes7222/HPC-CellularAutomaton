@@ -62,6 +62,7 @@ RUN_SEQ_MEM=false
 RUN_SEQ_MEM_OPT=false
 RUN_OMP_MEM=false
 RUN_OMP_MEM_OPT=false
+INHIBIT_SLEEP=true
 
 
 usage() {
@@ -72,6 +73,7 @@ Usage:
 
 Options:
   --machine NAME            Machine name used in tests/NAME/results_traffic
+  --no-inhibit              Do not attempt to inhibit sleep/suspend (not recommended)
   --secuencial              Run traffic_seq
   --secuencial-opt          Run traffic_seq_opt
   --omp                     Run traffic_omp
@@ -112,6 +114,11 @@ parse_args() {
 
             --machine=*)
                 MACHINE_FLAG="${1#*=}"
+                shift
+                ;;
+
+            --no-inhibit)
+                INHIBIT_SLEEP=false
                 shift
                 ;;
 
@@ -595,7 +602,7 @@ inhibit_sleep() {
     [[ -n "${BENCH_INHIBIT_ACTIVE:-}" ]] && return 0
 
     if ! command -v systemd-inhibit &>/dev/null; then
-        log_warn "systemd-inhibit not found -- machine may suspend during benchmark."
+        log_warn "systemd-inhibit not found — machine may suspend during benchmark."
         return 0
     fi
 
@@ -606,23 +613,29 @@ inhibit_sleep() {
     if systemd-inhibit \
         --what=sleep:idle \
         --who="bench_traffic" \
-        --why="Benchmark in progress -- do not suspend" \
+        --why="Benchmark in progress — do not suspend" \
         --mode=block \
-        bash "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@"; then
+        bash "$(realpath "${BASH_SOURCE[0]}")" "$@"
+    then
         exit 0
-    else
-        log_warn "Failed to acquire systemd inhibitor lock or child failed."
-        log_warn "Continuing benchmark without suspend protection."
-        return 0
     fi
+
+    log_warn "Failed to acquire sleep/suspend inhibitor lock."
+    log_warn "Continuing benchmark without suspend protection."
 }
 
 
 main() {
     parse_args "$@"
 
-    if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; then
-        inhibit_sleep "$@"
+
+    if [[ "${INHIBIT_SLEEP}" == true ]]; then
+        log_info "Attempting to inhibit sleep/suspend during benchmark..."
+        if [[ -z "${BENCH_INHIBIT_ACTIVE:-}" ]]; then
+            inhibit_sleep "$@"
+        fi
+    else
+        log_warn "Sleep/suspend inhibition is disabled. The machine may suspend during the benchmark, which can lead to very long runtimes and skewed results. Use --no-inhibit to disable this warning."
     fi
 
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
