@@ -582,7 +582,7 @@ inhibit_sleep() {
         --who="bench_traffic" \
         --why="Benchmark in progress — do not suspend" \
         --mode=block \
-        bash "${BASH_SOURCE[0]}" "$@"; then
+        bash "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@"; then
 
         log_warn "Failed to acquire systemd inhibitor lock."
         log_warn "Continuing benchmark without suspend protection."
