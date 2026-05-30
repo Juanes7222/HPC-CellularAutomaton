@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-# shellcheck source=tests/bench_utils.sh
-source "tests/bench_utils.sh"
+# shellcheck source=test/bench_utils.sh
+source "test/bench_utils.sh"
 
 # ---------------------------------------------------------------------------
 # State & Flags
@@ -39,10 +39,10 @@ INTERNAL_RUN=false
 usage() {
     cat <<'EOF'
 Usage:
-  ./tests/benchmarks/bench_traffic_mpi.sh [options]
+  ./test/bench_traffic_mpi.sh [options]
 
 Options:
-  --machine NAME            Machine name used in tests/NAME/results_traffic_mpi
+  --machine NAME            Machine name used in test/NAME/results_traffic_mpi
   --no-inhibit              Do not attempt to inhibit sleep/suspend (not recommended)
   --seq-mem-opt             Run traffic_seq_mem_opt (np=0 baseline)
   --mpi                     Run traffic_mpi (unoptimised)
@@ -106,7 +106,7 @@ selected_impls_string() {
 # ---------------------------------------------------------------------------
 
 BIN_DIR="bin"
-RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic_mpi"
+RESULTS_DIR="test/${MACHINE_FLAG}/results_traffic_mpi"
 CSV="${RESULTS_DIR}/data.csv"
 
 BIN_SEQ_MEM_OPT="${BIN_DIR}/traffic_seq_mem_opt"
