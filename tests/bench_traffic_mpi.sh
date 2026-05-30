@@ -197,14 +197,14 @@ run_binary() {
             output=$(sudo chrt -f 99 taskset -c "${cpu_list}" \
                 "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
                 "${BIN_MPI}" "${road_length}" "${density}" \
-                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
+                "${max_warmup}" "${MEASURE_STEPS}" 2>>/tmp/mpi_errors.log) || exit_code=$?
             ;;
         traffic_mpi_opt)
             cpu_list=$(cpu_list_for_np "${np}")
             output=$(sudo chrt -f 99 taskset -c "${cpu_list}" \
                 "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
                 "${BIN_MPI_OPT}" "${road_length}" "${density}" \
-                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
+                "${max_warmup}" "${MEASURE_STEPS}" 2>>/tmp/mpi_errors.log) || exit_code=$?
             ;;
         *)
             log_error "Unknown impl: '${impl}'"
@@ -429,7 +429,7 @@ main() {
 
     sudo -v
     local sudo_keeper_pid
-    ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
+    ( while true; do sudo -v 2>/dev/null; sleep 55; done ) &
     sudo_keeper_pid=$!
 
     trap '
