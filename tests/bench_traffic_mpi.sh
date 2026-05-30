@@ -394,11 +394,11 @@ maybe_run_with_inhibit() {
     export BENCH_INHIBIT_ACTIVE=1
 
     exec systemd-inhibit \
-        --what=sleep:idle \
-        --who="bench_traffic_mpi" \
-        --why="MPI Benchmark in progress — do not suspend" \
-        --mode=block \
-        bash "$(realpath "${BASH_SOURCE[0]}")" --internal-run "$@"
+            --what=sleep:idle \
+            --who="bench_traffic_mpi" \
+            --why="MPI Benchmark in progress — do not suspend" \
+            --mode=block \
+            bash "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" --internal-run "$@"
 }
 
 main() {
