@@ -405,6 +405,9 @@ main() {
     parse_args "$@"
     maybe_run_with_inhibit "$@"
 
+    RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic_mpi"
+    CSV="${RESULTS_DIR}/data.csv"
+
     mkdir -p "${RESULTS_DIR}" "${BIN_DIR}"
 
     if ! binaries_are_built; then
