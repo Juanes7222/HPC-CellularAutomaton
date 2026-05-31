@@ -287,12 +287,11 @@ $(BIN_DIR):
 
 deploy: all 
 	@echo "Deploying binaries and project structure to $(NFS_DIR)" 
-	@mkdir -p
-		\ $(NFS_DIR)/bin 
-		\ $(NFS_DIR)/results/csv 
-		\ $(NFS_DIR)/results/logs 
-		\ $(NFS_DIR)/results/raw 
-		\ $(NFS_DIR)/tmp 
+	@mkdir -p $(NFS_DIR)/bin \
+				 $(NFS_DIR)/results/csv \
+				 $(NFS_DIR)/results/logs \
+				 $(NFS_DIR)/results/raw \
+				 $(NFS_DIR)/tmp
 	@cp $(DEPLOY_BINS) $(NFS_DIR)/bin/ 
 	@echo "Deployment completed:" 
 	@echo " -> $(NFS_DIR)/bin"
