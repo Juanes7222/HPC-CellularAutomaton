@@ -194,17 +194,17 @@ run_binary() {
             ;;
         traffic_mpi)
             cpu_list=$(cpu_list_for_np "${np}")
-            output=$(sudo chrt -f 99 taskset -c "${cpu_list}" \
+            output=$(taskset -c "${cpu_list}" \
                 "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
                 "${BIN_MPI}" "${road_length}" "${density}" \
-                "${max_warmup}" "${MEASURE_STEPS}" 2>>/tmp/mpi_errors.log) || exit_code=$?
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         traffic_mpi_opt)
             cpu_list=$(cpu_list_for_np "${np}")
-            output=$(sudo chrt -f 99 taskset -c "${cpu_list}" \
+            output=$(taskset -c "${cpu_list}" \
                 "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
                 "${BIN_MPI_OPT}" "${road_length}" "${density}" \
-                "${max_warmup}" "${MEASURE_STEPS}" 2>>/tmp/mpi_errors.log) || exit_code=$?
+                "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         *)
             log_error "Unknown impl: '${impl}'"
@@ -430,15 +430,7 @@ main() {
 
     setup_csv "${RESULTS_DIR}" "${CSV}" "${CSV_HEADER}"
 
-    sudo -v
-    local sudo_keeper_pid
-    ( while true; do sudo -v 2>/dev/null; sleep 55; done ) &
-    sudo_keeper_pid=$!
-
-    trap '
-        [[ -n "${sudo_keeper_pid:-}" ]] && kill "${sudo_keeper_pid}" 2>/dev/null
-        restore_system
-    ' EXIT
+    trap 'restore_system' EXIT
 
     optimize_system
     print_banner
