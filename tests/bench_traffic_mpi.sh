@@ -108,6 +108,7 @@ selected_impls_string() {
 BIN_DIR="bin"
 RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic_mpi"
 CSV="${RESULTS_DIR}/data.csv"
+HOSTFILE="${MPI_HOSTFILE:-${HOME}/mpi_hostfile}"
 
 BIN_SEQ_MEM_OPT="${BIN_DIR}/traffic_seq_mem_opt"
 BIN_MPI="${BIN_DIR}/traffic_mpi"
@@ -193,16 +194,18 @@ run_binary() {
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         traffic_mpi)
-            cpu_list=$(cpu_list_for_np "${np}")
-            output=$(taskset -c "${cpu_list}" \
-                "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
+            local mpirun_args=(--oversubscribe -np "${np}")
+            [[ -f "${HOSTFILE}" ]] && mpirun_args+=(--hostfile "${HOSTFILE}")
+
+            output=$("${MPIRUN}" "${mpirun_args[@]}" \
                 "${BIN_MPI}" "${road_length}" "${density}" \
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         traffic_mpi_opt)
-            cpu_list=$(cpu_list_for_np "${np}")
-            output=$(taskset -c "${cpu_list}" \
-                "${MPIRUN}" --oversubscribe -np "${np}" --bind-to core --map-by core \
+            local mpirun_args=(--oversubscribe -np "${np}")
+            [[ -f "${HOSTFILE}" ]] && mpirun_args+=(--hostfile "${HOSTFILE}")
+
+            output=$("${MPIRUN}" "${mpirun_args[@]}" \
                 "${BIN_MPI_OPT}" "${road_length}" "${density}" \
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
