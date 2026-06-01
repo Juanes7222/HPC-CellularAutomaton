@@ -47,6 +47,7 @@ Options:
   --seq-mem-opt             Run traffic_seq_mem_opt (np=0 baseline)
   --mpi                     Run traffic_mpi (unoptimised)
   --mpi-opt                 Run traffic_mpi_opt (optimised)
+  --np N, [...N]           Comma-separated list of np values to test (default: 2,3,4)
   --all                     Run every implementation
   -h, --help                Show this help
 EOF
@@ -71,6 +72,8 @@ parse_args() {
             --seq-mem-opt) enable_selected_mode; RUN_SEQ_MEM_OPT=true; shift ;;
             --mpi) enable_selected_mode; RUN_MPI=true; shift ;;
             --mpi-opt) enable_selected_mode; RUN_MPI_OPT=true; shift ;;
+            --np) shift; IFS=',' read -ra ALL_NP_VALUES <<< "$1"; shift ;;
+             --np=*) IFS=',' read -ra ALL_NP_VALUES <<< "${1#*=}"; shift ;;
             --all) RUN_ALL=true; shift ;;
             -h|--help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
