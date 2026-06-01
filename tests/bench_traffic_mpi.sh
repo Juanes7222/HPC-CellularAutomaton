@@ -36,6 +36,7 @@ RUN_MPI_OPT=false
 INHIBIT_SLEEP=true
 INTERNAL_RUN=false
 
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -72,8 +73,8 @@ parse_args() {
             --seq-mem-opt) enable_selected_mode; RUN_SEQ_MEM_OPT=true; shift ;;
             --mpi) enable_selected_mode; RUN_MPI=true; shift ;;
             --mpi-opt) enable_selected_mode; RUN_MPI_OPT=true; shift ;;
-            --np) shift; IFS=',' read -ra ALL_NP_VALUES <<< "$1"; shift ;;
-             --np=*) IFS=',' read -ra ALL_NP_VALUES <<< "${1#*=}"; shift ;;
+            --np) shift; IFS=',' read -ra ALL_NP_COUNTS <<< "$1"; shift ;;
+             --np=*) IFS=',' read -ra ALL_NP_COUNTS <<< "${1#*=}"; shift ;;
             --all) RUN_ALL=true; shift ;;
             -h|--help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
