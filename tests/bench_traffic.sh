@@ -700,16 +700,16 @@ main() {
 
     setup_csv "${RESULTS_DIR}" "${CSV}" "${CSV_HEADER}"
 
-    sudo -v
+    # sudo -v
 
-    local sudo_keeper_pid
-    ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
-    sudo_keeper_pid=$!
+    # local sudo_keeper_pid
+    # ( while true; do sudo -nv 2>/dev/null; sleep 55; done ) &
+    # sudo_keeper_pid=$!
 
-    trap '
-        [[ -n "${sudo_keeper_pid:-}" ]] && kill "${sudo_keeper_pid}" 2>/dev/null
-        restore_system
-    ' EXIT
+    # trap '
+    #     [[ -n "${sudo_keeper_pid:-}" ]] && kill "${sudo_keeper_pid}" 2>/dev/null
+    #     restore_system
+    # ' EXIT
 
     optimize_system
     print_banner
