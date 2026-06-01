@@ -105,7 +105,7 @@ selected_impls_string() {
 # Configuration
 # ---------------------------------------------------------------------------
 
-BIN_DIR="bin"
+BIN_DIR="/srv/nfs/hpc-automaton/bin"
 RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic_mpi"
 CSV="${RESULTS_DIR}/data.csv"
 HOSTFILE="${MPI_HOSTFILE:-${HOME}/mpi_hostfile}"
@@ -194,18 +194,12 @@ run_binary() {
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         traffic_mpi)
-            local mpirun_args=(--oversubscribe -np "${np}")
-            [[ -f "${HOSTFILE}" ]] && mpirun_args+=(--hostfile "${HOSTFILE}")
-
-            output=$("${MPIRUN}" "${mpirun_args[@]}" \
+            output=$("${MPIRUN}" --oversubscribe -np "${np}" --hostfile "${HOSTFILE}" \
                 "${BIN_MPI}" "${road_length}" "${density}" \
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
         traffic_mpi_opt)
-            local mpirun_args=(--oversubscribe -np "${np}")
-            [[ -f "${HOSTFILE}" ]] && mpirun_args+=(--hostfile "${HOSTFILE}")
-
-            output=$("${MPIRUN}" "${mpirun_args[@]}" \
+            output=$("${MPIRUN}" --oversubscribe -np "${np}" --hostfile "${HOSTFILE}" \
                 "${BIN_MPI_OPT}" "${road_length}" "${density}" \
                 "${max_warmup}" "${MEASURE_STEPS}" 2>/dev/null) || exit_code=$?
             ;;
@@ -406,7 +400,7 @@ maybe_run_with_inhibit() {
 
 main() {
     parse_args "$@"
-    maybe_run_with_inhibit "$@"
+    # maybe_run_with_inhibit "$@"
 
     RESULTS_DIR="tests/${MACHINE_FLAG}/results_traffic_mpi"
     CSV="${RESULTS_DIR}/data.csv"
