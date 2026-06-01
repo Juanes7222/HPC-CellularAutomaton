@@ -4,297 +4,78 @@
 
 \section{Desarrollo de la implementación}
 
-Esta sección describe cómo se construyó el simulador de tráfico unidimensional
-con paralelismo MPI, explicando las decisiones de diseño y sus consecuencias en
-rendimiento. La idea central fue mantener separadas la lógica del autómata, la
-gestión del estado distribuido y el mecanismo de comunicación, de modo que
-cualquier diferencia de rendimiento entre configuraciones sea atribuible al
-número de procesos o a la estrategia de compilación, y no a cambios en el
-algoritmo.
+En esta sección se presenta la construcción del simulador de tráfico unidimensional usando paralelismo con MPI. El objetivo principal fue mantener separadas la lógica del autómata, la distribución del estado y el intercambio de información entre procesos, de manera que las diferencias observadas en rendimiento dependan realmente del número de procesos y de la estrategia de compilación, y no de cambios en el algoritmo. Esta separación también facilita la verificación de corrección y hace más clara la comparación entre la versión secuencial y la distribuida.
 
 % ---------------------------------------------------------------------------
 \subsection{Modelo del autómata celular de tráfico}
 % ---------------------------------------------------------------------------
 
-El sistema modela una carretera circular de $N$ celdas. Cada celda
-$i \in \{0, 1, \ldots, N-1\}$ puede estar vacía ($R = 0$) o contener un carro
-($R = 1$). En cada paso de tiempo, un carro avanza a la celda siguiente si está
-libre, o se queda donde está si está ocupada. La regla de actualización es:
+El sistema representa una carretera circular dividida en $N$ celdas. Cada celda puede estar vacía o contener un carro, y en cada paso de tiempo cada carro intenta avanzar a la siguiente posición si esa celda está libre. Si la celda siguiente está ocupada, el carro permanece en su lugar. Esta dinámica captura un comportamiento simple pero suficiente para estudiar flujo vehicular, conservación de vehículos y efectos de congestión.
 
-\begin{equation}
-    R(t+1,\, i) =
-    \bigl[R(t,i) \wedge R(t,\,(i+1)\bmod N)\bigr]
-    \;\vee\;
-    \bigl[R(t,\,(i-1)\bmod N) \wedge \neg R(t,i)\bigr].
-    \label{eq:regla}
-\end{equation}
+La regla de evolución se expresa de forma local: el nuevo estado de una celda depende únicamente de su contenido actual y del contenido de sus vecinas inmediata izquierda y derecha. Gracias a esto, el problema se presta muy bien al paralelismo, porque cada posición puede actualizarse de forma independiente una vez que se conocen los valores de frontera correspondientes.
 
-El primer término representa un carro que no puede avanzar porque la celda
-siguiente está ocupada. El segundo representa un carro de la celda anterior que
-avanza hacia una celda libre. La condición $\neg R(t,i)$ en el segundo término
-evita que dos carros ocupen la misma celda simultáneamente.
-
-Cada celda se almacena como un entero sin signo de 8 bits (\texttt{uint8\_t}).
-La regla anterior se traduce a operaciones de bits:
-
-\begin{equation}
-    \texttt{next}[i] =
-    (h \;\&\; a) \;\mid\;
-    (b \;\&\; \mathtt{(uint8\_t)(\sim h)} \;\&\; \mathtt{1u}),
-    \label{eq:kernel}
-\end{equation}
-
-donde $b = R(t,\,i{-}1)$, $h = R(t,\,i)$ y $a = R(t,\,i{+}1)$. El cast
-explícito \texttt{(uint8\_t)(\textasciitilde h)} es necesario porque el operador
-\texttt{\textasciitilde} en C promueve el operando a \texttt{int} antes de
-invertirlo; sin el cast, el resultado sería \texttt{0xFFFFFFFE} en lugar de
-\texttt{0xFE}, y la conjunción con \texttt{1u} produciría cero
-incorrectamente cuando $h = 1$.
-
-Las lecturas del paso $t$ provienen del arreglo \texttt{cells} y las escrituras
-del paso $t+1$ van al arreglo \texttt{next\_cells}. Como son arreglos distintos
-y cada posición nueva depende únicamente de valores del paso anterior, todas las
-iteraciones del bucle son completamente independientes entre sí, lo que hace el
-problema embarazosamente paralelo.
+En la implementación, cada celda se almacena como un entero de 8 bits sin signo (\texttt{uint8\_t}). Esto permite trabajar con un formato compacto y eficiente en memoria. La actualización del estado se traduce entonces a operaciones lógicas elementales sobre bytes, evitando estructuras más pesadas y manteniendo el kernel de cómputo muy liviano. Además, como el cálculo del siguiente estado se realiza sobre dos arreglos distintos, uno para el estado actual y otro para el siguiente, no hay dependencias entre iteraciones del bucle principal.
 
 % ---------------------------------------------------------------------------
 \subsection{Velocidad media y estado estacionario}
 % ---------------------------------------------------------------------------
 
-La velocidad media en el paso $t$ es la fracción de carros que se desplazaron:
+Una de las magnitudes más importantes del modelo es la velocidad media de los carros. En cada paso, esta velocidad corresponde a la fracción de vehículos que lograron avanzar. Como el sistema conserva el número total de carros, esta medida resume de manera sencilla qué tan fluido está el tráfico en un instante dado.
 
-\begin{equation}
-    v(t) = \frac{1}{N_c}
-    \sum_{i=0}^{N-1}
-    \mathbf{1}\bigl[R(t,i) = 1 \;\wedge\; R(t+1,i) = 0\bigr],
-    \label{eq:velocidad}
-\end{equation}
-
-donde $N_c$ es el número total de carros. Este valor es constante durante toda
-la simulación: la regla~\eqref{eq:regla} nunca crea ni elimina carros, lo que
-se verifica explícitamente en los tests de corrección.
-
-Partiendo de una distribución inicial aleatoria, el sistema atraviesa una fase
-transitoria donde $v(t)$ fluctúa mientras los carros se reorganizan. Tras
-suficientes pasos, $v(t)$ converge a la velocidad asintótica $v_\infty$, que es
-el valor de interés. El benchmark reporta el promedio sobre la fase de medición:
-
-\begin{equation}
-    v_\infty \approx \bar{v} =
-    \frac{1}{T_m}
-    \sum_{t = T_w + 1}^{T_w + T_m} v(t),
-    \label{eq:vasint}
-\end{equation}
-
-donde $T_w$ es el número de pasos de calentamiento y $T_m$ el número de pasos
-de medición.
+Cuando la simulación comienza desde una configuración aleatoria, el sistema atraviesa primero una etapa transitoria en la que los carros se reacomodan. Durante ese periodo, la velocidad puede fluctuar bastante. Después de suficientes pasos, la dinámica tiende a estabilizarse y la velocidad converge a un valor representativo del régimen estacionario. Ese valor es el que se usa para reportar el comportamiento promedio del sistema durante la fase de medición.
 
 % ---------------------------------------------------------------------------
 \subsection{Criterio de convergencia del calentamiento}
 % ---------------------------------------------------------------------------
 
-La duración de la fase transitoria varía con la densidad y con $N$. Para
-detectar la convergencia automáticamente, se compara la velocidad media en dos
-ventanas consecutivas de $W$ pasos. El calentamiento termina cuando:
+La duración de la fase transitoria no es fija: depende de la densidad inicial y del tamaño de la carretera. Para evitar escoger un número de pasos de calentamiento arbitrario, se usa un criterio automático basado en la comparación de la velocidad promedio en dos ventanas consecutivas. Cuando la diferencia entre ambas ventanas cae por debajo de un umbral pequeño, se considera que el sistema ya alcanzó un comportamiento estable.
 
-\begin{equation}
-    \left|
-        \bar{v}_{[t-W,\, t]}
-        - \bar{v}_{[t-2W,\, t-W]}
-    \right| < \varepsilon,
-    \label{eq:criterio}
-\end{equation}
-
-con $W = 50$, $\varepsilon = 10^{-4}$ y un mínimo de 200 pasos antes de evaluar
-el criterio, para evitar falsos positivos al inicio. El parámetro
-\texttt{max\_warmup\_steps} actúa como techo; si la condición~\eqref{eq:criterio}
-no se cumple antes de ese límite, el calentamiento termina de todas formas. En
-el script de benchmark este techo se fija como $\max(N/10,\; 2000)$, que
-garantiza al menos el tiempo suficiente para que una perturbación recorra la
-carretera completa.
+Este criterio se complementa con dos protecciones prácticas. Primero, se exige un mínimo de pasos antes de evaluar la convergencia, con el fin de evitar falsas detecciones al inicio de la simulación. Segundo, se fija un límite máximo de calentamiento para impedir que el proceso se prolongue indefinidamente si la estabilización tarda más de lo esperado. En conjunto, esto permite adaptar el calentamiento al tamaño del problema sin perder control sobre el tiempo total de ejecución.
 
 % ---------------------------------------------------------------------------
 \subsection{Modelo de distribución de datos}
 % ---------------------------------------------------------------------------
 
-Con $P$ procesos MPI y una carretera de $N$ celdas, el proceso de rango $r$
-recibe un bloque contiguo de celdas indexadas globalmente en
-$[\mathit{offset}_r,\; \mathit{offset}_r + \ell_r - 1]$. La distribución se
-calcula con una partición por bloques que reparte el residuo entre los primeros
-rangos:
+Para paralelizar la simulación, la carretera se reparte entre $P$ procesos MPI en bloques contiguos. Cada proceso recibe un segmento continuo de celdas, con una distribución muy equilibrada: la diferencia entre el bloque más grande y el más pequeño nunca supera una celda. Esto es importante porque el trabajo por celda es uniforme, así que repartir de esta forma evita desbalances innecesarios.
 
-\begin{equation}
-    \ell_r = \left\lfloor \frac{N}{P} \right\rfloor
-             + \mathbf{1}[r < N \bmod P],
-    \qquad
-    \mathit{offset}_r = r \left\lfloor \frac{N}{P} \right\rfloor
-                        + \min(r,\; N \bmod P).
-    \label{eq:distribucion}
-\end{equation}
-
-Esta distribución garantiza que la diferencia entre el bloque más largo y el más
-corto sea como máximo una celda, manteniendo el balance de carga para el kernel
-de cómputo, cuyo trabajo por celda es completamente uniforme. La implementación
-calcula los arreglos de conteos y desplazamientos en la función
-\texttt{road\_mpi\_build\_distribution}, que se usa tanto en el scatter inicial
-como en el gather del validador.
-
-El estado global se genera en el rango~0 usando
-\texttt{srand((unsigned~int)time(NULL))} y se dispersa a todos los procesos con
-\texttt{MPI\_Scatterv}. Para que la implementación sea correcta se requiere
-$P \leq N$; la función \texttt{road\_mpi\_create} verifica esta condición y
-aborta con un mensaje diagnóstico si se viola, ya que un bloque de longitud cero
-rompe la topología en anillo descrita en la Sección~\ref{sec:frontera}.
+El estado global se construye inicialmente en el proceso de rango cero y luego se distribuye a los demás procesos mediante \texttt{MPI\_Scatterv}. Esta estrategia simplifica la inicialización y permite que todos los rangos empiecen a trabajar con una parte coherente del mismo estado global. Para que la partición sea válida, el número de procesos no puede superar el número total de celdas; de lo contrario, algunos bloques quedarían vacíos y la topología circular del problema perdería sentido.
 
 % ---------------------------------------------------------------------------
 \subsection{Estructura de datos distribuida}
 % ---------------------------------------------------------------------------
 
-La estructura \texttt{RoadMPI} encapsula el estado completo de cada proceso:
+Cada proceso trabaja con una estructura que encapsula tanto el estado local como la información necesaria para comunicarse con sus vecinos. Esta estructura almacena los arreglos con las celdas actuales y las celdas del siguiente paso, los tamaños globales y locales, el desplazamiento dentro de la carretera global y los rangos de los vecinos izquierdo y derecho. También guarda el número total de carros, que se calcula una sola vez al inicio y se usa después para normalizar la velocidad media.
 
-\begin{itemize}
-    \item \texttt{cells} y \texttt{next\_cells}: búferes de \texttt{uint8\_t}
-          reservados con \texttt{posix\_memalign(64,~$\cdot$)}, lo que alinea
-          cada búfer al inicio de una línea de caché de 64 bytes. Esta
-          alineación beneficia al prefetcher y permite al compilador emitir
-          cargas AVX2 alineadas en el bucle de actualización.
-
-    \item \texttt{global\_length}, \texttt{local\_length},
-          \texttt{global\_offset}: parámetros de la
-          distribución~\eqref{eq:distribucion}.
-
-    \item \texttt{global\_car\_count}: número total de carros $N_c$, calculado
-          una sola vez con \texttt{MPI\_Allreduce} tras la dispersión inicial y
-          constante durante toda la simulación. Se usa como denominador
-          en~\eqref{eq:velocidad}.
-
-    \item \texttt{left\_rank} y \texttt{right\_rank}: rangos del vecino
-          izquierdo $(r-1) \bmod P$ y derecho $(r+1) \bmod P$. La aritmética
-          modular establece la topología en anillo que implementa las condiciones
-          de frontera periódicas.
-
-    \item \texttt{comm}: comunicador MPI, parametrizable para facilitar pruebas
-          con subcomunicadores.
-\end{itemize}
-
-Al finalizar cada paso de simulación, los punteros \texttt{cells} y
-\texttt{next\_cells} se intercambian directamente sin copiar datos, de la misma
-forma que en la implementación secuencial. No se realizan asignaciones de memoria
-dentro del bucle de simulación, lo que elimina ese ruido de las mediciones de
-tiempo.
+Los búferes de datos se reservan alineados a 64 bytes, lo que favorece el acceso eficiente a memoria y mejora las posibilidades de vectorización por parte del compilador. Además, al intercambiar únicamente los punteros entre los arreglos actual y siguiente al terminar cada iteración, se evita copiar datos y se reduce el costo del ciclo de simulación.
 
 % ---------------------------------------------------------------------------
 \subsection{Condiciones de frontera periódicas en el entorno distribuido}
 \label{sec:frontera}
 % ---------------------------------------------------------------------------
 
-La carretera es circular: la celda~$0$ tiene como vecina izquierda a la
-celda~$N-1$, y la celda~$N-1$ tiene como vecina derecha a la celda~$0$. En el
-entorno distribuido, la celda~$0$ local del proceso~$r$ y la celda~$\ell_r - 1$
-local del proceso~$r$ necesitan información de procesos distintos para que la
-regla~\eqref{eq:kernel} pueda aplicarse:
+La carretera es circular, así que la última celda conecta con la primera. En la versión distribuida, esa continuidad debe respetarse aunque la información esté repartida entre procesos distintos. Por eso, en cada paso cada proceso necesita conocer una celda de su vecino izquierdo y una de su vecino derecho para poder actualizar correctamente sus posiciones de borde.
 
-\begin{itemize}
-    \item El proceso $r$ necesita la última celda del proceso $r-1$ como
-          \emph{halo izquierdo} al calcular $R^{t+1}(\mathit{offset}_r)$.
-    \item El proceso $r$ necesita la primera celda del proceso $r+1$ como
-          \emph{halo derecho} al calcular
-          $R^{t+1}(\mathit{offset}_r + \ell_r - 1)$.
-\end{itemize}
-
-Para $r = 0$, el halo izquierdo proviene del proceso $P-1$ (borde derecho de
-la carretera global), y para $r = P-1$, el halo derecho proviene del
-proceso~$0$ (borde izquierdo). Esto implementa exactamente la condición
-periódica $R^t(0) \equiv R^t(N)$ de forma transparente al kernel de cómputo.
+Estas celdas adicionales se manejan como halos. El halo izquierdo de un proceso proviene de la última celda del proceso anterior, mientras que el halo derecho proviene de la primera celda del proceso siguiente. En el caso de los extremos, la comunicación se cierra sobre sí misma: el primer proceso recibe información del último, y el último del primero. De este modo, la condición periódica del modelo se mantiene exactamente en el entorno MPI.
 
 % ---------------------------------------------------------------------------
 \subsection{Intercambio de halos no bloqueante}
 % ---------------------------------------------------------------------------
 
-Antes de cada paso de simulación, cada proceso envía sus celdas de borde a sus
-vecinos y recibe las de ellos. La función \texttt{post\_halo\_exchange} publica
-cuatro operaciones no bloqueantes con un esquema de etiquetas que evita
-ambigüedades:
+Antes de actualizar su parte de la carretera, cada proceso intercambia sus valores de frontera con los vecinos. Para ello se utilizan operaciones no bloqueantes, específicamente \texttt{MPI\_Irecv} y \texttt{MPI\_Isend}. Esta decisión permite que la comunicación se inicie sin detener el proceso, de forma que mientras los mensajes viajan por la red se pueda avanzar con el cómputo del interior del bloque local.
 
-\begin{itemize}
-    \item \texttt{TAG\_SEND\_LEFT} (100): etiqueta con la que un proceso envía
-          \texttt{cells[0]} a su vecino izquierdo (\texttt{left\_rank}), para
-          que este lo use como halo derecho.
-    \item \texttt{TAG\_SEND\_RIGHT} (101): etiqueta con la que un proceso envía
-          \texttt{cells[$\ell_r - 1$]} a su vecino derecho (\texttt{right\_rank}),
-          para que este lo use como halo izquierdo.
-\end{itemize}
+El esquema de etiquetas se define cuidadosamente para evitar confusiones entre mensajes que van en sentidos opuestos. Cada proceso envía su primera celda a su vecino izquierdo y su última celda a su vecino derecho, y recibe de ellos los halos correspondientes. La simetría del protocolo hace que cada rango pueda interpretar de manera unívoca qué dato pertenece a cada frontera.
 
-La simetría del esquema establece que el proceso $r$ recibe su halo izquierdo
-del proceso $r-1$ con \texttt{TAG\_SEND\_RIGHT} (porque $r-1$ está enviando su
-celda más a la derecha), y recibe su halo derecho del proceso $r+1$ con
-\texttt{TAG\_SEND\_LEFT} (porque $r+1$ está enviando su celda más a la
-izquierda). La función publica las cuatro operaciones y retorna los cuatro
-objetos \texttt{MPI\_Request} al llamador:
-
-\begin{center}
-\begin{verbatim}
-MPI_Irecv(left_halo,  1, MPI_UINT8_T, left_rank,  TAG_SEND_RIGHT, ...);
-MPI_Irecv(right_halo, 1, MPI_UINT8_T, right_rank, TAG_SEND_LEFT,  ...);
-MPI_Isend(&cells[0],       1, MPI_UINT8_T, left_rank,  TAG_SEND_LEFT,  ...);
-MPI_Isend(&cells[len - 1], 1, MPI_UINT8_T, right_rank, TAG_SEND_RIGHT, ...);
-\end{verbatim}
-\end{center}
-
-El uso de operaciones no bloqueantes (\texttt{Irecv}/\texttt{Isend}) en lugar de
-sus equivalentes bloqueantes es deliberado: permite solapar la latencia de red
-con el cómputo del interior del bloque local, como se describe en la
-sección siguiente.
+Este diseño no solo es correcto, sino también eficiente: reduce el tiempo ocioso y permite superponer parte de la latencia de comunicación con trabajo útil de cómputo.
 
 % ---------------------------------------------------------------------------
 \subsection{Kernel distribuido con solapamiento comunicación-cómputo}
 % ---------------------------------------------------------------------------
 
-La función \texttt{compute\_next\_and\_count\_distributed} ejecuta un paso
-completo del autómata en cinco fases:
+La actualización de un paso completo se organiza en varias fases. Primero se publican los intercambios de halos. Luego se calcula el interior del bloque local, que no depende de datos externos y por tanto puede procesarse de inmediato. Después se espera a que lleguen las fronteras, se actualizan las celdas borde y finalmente se realiza una reducción global para obtener el total de carros que avanzaron durante ese paso.
 
-\begin{enumerate}
-    \item \textbf{Publicar halos.} Se llama a \texttt{post\_halo\_exchange}.
-          Las cuatro operaciones quedan en vuelo mientras el proceso
-          continúa trabajando localmente.
+Este orden tiene una intención clara: aprovechar al máximo el tiempo disponible mientras la red entrega los datos necesarios para los bordes. El interior del bloque suele ser la parte más grande del trabajo local, así que calcularlo mientras se completa la comunicación ayuda a esconder parte del costo de MPI.
 
-    \item \textbf{Cómputo del interior.} Se aplica la regla~\eqref{eq:kernel}
-          a las celdas $i \in [1,\, \ell_r - 2]$, que solo dependen de vecinos
-          locales. Para $\ell_r \geq 3$ este bucle se ejecuta sin necesidad de
-          esperar la red:
-
-\begin{center}
-\begin{verbatim}
-for (int i = 1; i < len - 1; i++) {
-    nxt[i]     = update_cell(cur[i-1], cur[i], cur[i+1]);
-    departed  += (cur[i] == 1u && nxt[i] == 0u) ? 1 : 0;
-}
-\end{verbatim}
-\end{center}
-
-          El conteo de carros desplazados se acumula en la misma pasada,
-          evitando un segundo recorrido sobre los datos. Los casos $\ell_r = 1$
-          y $\ell_r = 2$ se tratan después de la espera de halos, ya que en
-          esos casos todas las celdas son bordes.
-
-    \item \textbf{Esperar halos.} \texttt{MPI\_Waitall} bloquea hasta que las
-          cuatro operaciones publicadas en la fase~1 se completan. Si la red
-          entregó los datos durante la fase~2, el tiempo de espera efectivo
-          es cero.
-
-    \item \textbf{Cómputo de los bordes.} Se aplica la regla~\eqref{eq:kernel}
-          a las celdas $i = 0$ e $i = \ell_r - 1$ usando los halos recibidos.
-
-    \item \textbf{Reducción global.} \texttt{MPI\_Allreduce} suma los contadores
-          locales de carros desplazados y entrega el total a todos los procesos:
-          \[
-              v(t) = \frac{\displaystyle\sum_{r=0}^{P-1}
-              \mathit{departed}_r}{N_c}.
-          \]
-          Todos los procesos reciben exactamente el mismo valor de $v(t)$,
-          lo que es fundamental para el criterio de convergencia del
-          calentamiento.
-\end{enumerate}
+La reducción global se hace con \texttt{MPI\_Allreduce}, de modo que todos los procesos terminan con el mismo valor de velocidad media en cada paso. Esto es fundamental para que el criterio de convergencia pueda evaluarse de forma idéntica en todos los rangos sin agregar una comunicación adicional.
 
 \begin{figure}[H]
 \centering
@@ -302,14 +83,14 @@ for (int i = 1; i < len - 1; i++) {
 \begin{minipage}{0.94\textwidth}
 \centering
 \textbf{Flujo de un paso distribuido (proceso $r$)}\\[4pt]
-\texttt{Irecv}/\texttt{Isend} halos
-$\;\longrightarrow\;$ cómputo interior $[1,\, \ell_r{-}2]$
+\texttt{Irecv}/\texttt{Isend} de halos
+$\;\longrightarrow\;$ cómputo del interior
 $\;\longrightarrow\;$ \texttt{Waitall}
-$\;\longrightarrow\;$ cómputo bordes $\{0,\; \ell_r{-}1\}$
-$\;\longrightarrow\;$ \texttt{Allreduce}($\mathit{departed}$)
+$\;\longrightarrow\;$ cómputo de bordes
+$\;\longrightarrow\;$ \texttt{Allreduce} del avance
 $\;\longrightarrow\;$ intercambio de punteros
 \end{minipage}}
-\caption{Ciclo de un paso de simulación en la implementación MPI.}
+\caption{Secuencia general de un paso de simulación en la implementación MPI.}
 \label{fig:flujo_mpi}
 \end{figure}
 
@@ -317,329 +98,62 @@ $\;\longrightarrow\;$ intercambio de punteros
 \subsection{Propiedad SPMD del calentamiento}
 % ---------------------------------------------------------------------------
 
-Como todos los procesos obtienen exactamente el mismo valor de $v(t)$ a través
-de \texttt{MPI\_Allreduce}, la función
-\texttt{simulation\_mpi\_warmup\_until\_steady\_state} evalúa el
-criterio~\eqref{eq:criterio} de forma independiente en cada rango y llega a la
-misma conclusión en el mismo paso, sin necesitar ninguna comunicación adicional
-para sincronizar el fin del calentamiento. Esta propiedad, que se denomina
-\emph{SPMD-idéntica}, simplifica el código del calentamiento y garantiza que
-\texttt{MPI\_Finalize} se llame colectivamente sin interbloqueo en cualquier
-configuración.
+Como todos los procesos reciben el mismo valor de velocidad en cada paso, el criterio de convergencia se evalúa de la misma manera en todos ellos. Esto permite que la fase de calentamiento siga un comportamiento SPMD consistente: cada proceso toma la misma decisión en el mismo instante, sin necesidad de sincronizaciones adicionales para declarar que el sistema ya se estabilizó.
+
+Esta propiedad simplifica mucho la lógica de control y evita complicaciones al finalizar la simulación. También reduce el riesgo de bloqueos, porque todos los procesos avanzan de forma coherente hacia la misma condición de término.
 
 % ---------------------------------------------------------------------------
 \subsection{Temporización y salida}
 % ---------------------------------------------------------------------------
 
-La medición de tiempo usa \texttt{MPI\_Wtime}, que en OpenMPI resuelve a un
-contador de hardware de alta resolución sincronizado entre los procesos del mismo
-trabajo. El cronómetro se activa justo antes de la fase de medición, dejando el
-calentamiento fuera del tiempo reportado. Como los procesos no terminan
-exactamente al mismo tiempo, se aplica \texttt{MPI\_Reduce} con \texttt{MPI\_MAX}
-para reportar el tiempo del proceso más lento:
+La medición de tiempo se realiza con \texttt{MPI\_Wtime}, dejando fuera la fase de calentamiento para que el valor reportado refleje únicamente el comportamiento de la fase de medición. Como no todos los procesos terminan exactamente al mismo tiempo, el tiempo final se toma como el máximo entre todos ellos, lo cual representa la duración real de la ejecución sincronizada.
 
-\begin{equation}
-    t_{\text{wall}} = \max_{r \in [0,P)}
-    \bigl(t_{\text{fin},r} - t_{\text{inicio},r}\bigr).
-    \label{eq:tiempo_mpi}
-\end{equation}
-
-Este valor refleja la duración real de la ejecución sincronizada y es el
-apropiado para calcular el speedup. El rango~0 imprime exactamente una línea
-en \texttt{stdout}:
-
-\begin{center}
-\texttt{TIME\_MS AVG\_VELOCITY}
-\end{center}
-
-Los mensajes diagnósticos (número de pasos de calentamiento, número de procesos
-efectivos) se envían a \texttt{stderr} para no interferir con la captura de
-resultados del script de benchmark.
-
-La interfaz de línea de comandos es:
-
-\begin{center}
-\texttt{traffic\_mpi\_opt} $N$ $\rho$ \texttt{max\_warmup} $T_m$
-\end{center}
+El programa principal imprime una sola línea con el tiempo total y la velocidad promedio. Los mensajes auxiliares se envían a la salida de error para no interferir con el procesamiento automático de resultados. La interfaz de ejecución se mantiene simple, con los parámetros del tamaño de la carretera, densidad inicial, máximo de calentamiento y número de pasos de medición.
 
 % ---------------------------------------------------------------------------
 \subsection{Arquitectura de módulos}
 % ---------------------------------------------------------------------------
 
-La implementación se divide en cuatro módulos con responsabilidades bien
-delimitadas:
+La implementación se organizó en módulos con responsabilidades bien definidas. Un archivo se encarga del estado distribuido y de la distribución inicial de datos; otro concentra la lógica del kernel MPI y el intercambio de halos; un tercero coordina la ejecución general, la línea de comandos y la temporización; y un cuarto contiene los validadores distribuidos. Esta separación hace que el código sea más fácil de mantener y facilita la reutilización de componentes entre pruebas y experimentos.
 
-\begin{table}[H]
-\centering
-\caption{Módulos de la implementación MPI y sus responsabilidades.}
-\label{tab:modulos_mpi}
-\begin{tabular}{lll}
-\hline
-Archivo & Cabecera & Responsabilidad \\
-\hline
-\texttt{road\_mpi.c}       & \texttt{road\_mpi.h}       & Estado distribuido, scatter, gather \\
-\texttt{simulation\_mpi.c} & \texttt{simulation\_mpi.h} & Kernel temporal, halos, Allreduce \\
-\texttt{mpi\_main.c}       & ---                        & Orquestación, CLI, temporización \\
-\texttt{validator\_mpi.c}  & \texttt{validator\_mpi.h}  & Tests de corrección distribuidos \\
-\hline
-\end{tabular}
-\end{table}
-
-El módulo \texttt{mpi\_common.h} define las etiquetas de mensajes y los
-helpers \texttt{left\_rank}/\texttt{right\_rank} como funciones estáticas en
-línea, compartidas entre \texttt{road\_mpi.c} y \texttt{simulation\_mpi.c}.
+Además, un archivo común define las etiquetas de comunicación y algunas funciones auxiliares para calcular los vecinos izquierdo y derecho. Con esto se evita duplicar lógica entre los módulos que manipulan la topología del anillo.
 
 % ---------------------------------------------------------------------------
 \subsection{Variantes de compilación}
 % ---------------------------------------------------------------------------
 
-Se generan dos binarios que difieren únicamente en las flags de compilación.
-El compilador base es \texttt{mpicc}, que es un wrapper sobre \texttt{gcc} que
-inyecta automáticamente los flags de include y linker para la implementación MPI
-disponible; todos los flags de optimización llegan directamente al gcc
-subyacente.
+Se construyeron dos binarios que comparten el mismo código fuente, pero difieren en las banderas de compilación. Uno actúa como versión de referencia y el otro como versión optimizada. Ambos se generan con \texttt{mpicc}, que funciona como un envoltorio sobre el compilador base y facilita el uso de MPI sin configurar manualmente las rutas de inclusión o enlace.
 
-\begin{table}[H]
-\centering
-\caption{Binarios generados por \texttt{make mpi mpi\_opt}.}
-\label{tab:binarios_mpi}
-\begin{tabular}{llcl}
-\hline
-Binario & \texttt{impl} en CSV & Flags OPT & Descripción \\
-\hline
-\texttt{traffic\_mpi}      & \texttt{traffic\_mpi}     & No  & Referencia sin optimización \\
-\texttt{traffic\_mpi\_opt} & \texttt{traffic\_mpi\_opt} & Sí & Producción: \texttt{-O3 -march=native -flto} \\
-\hline
-\end{tabular}
-\end{table}
-
-Las flags de optimización actúan sobre el mismo perfil de kernel que en la
-versión secuencial: tres cargas de memoria, dos operaciones lógicas y una
-escritura por celda, limitado por el ancho de banda de memoria para $N$ grande.
-
-\begin{itemize}
-    \item \texttt{-O3}: activa vectorización automática del bucle interior,
-          transformaciones de bucle e inlining agresivo.
-
-    \item \texttt{-march=native}: emite instrucciones AVX2 o AVX-512 según el
-          procesador. Con datos \texttt{uint8\_t}, un registro AVX2 de 256 bits
-          contiene 32 celdas, permitiendo procesar 32 posiciones por instrucción
-          SIMD.
-
-    \item \texttt{-flto} con \texttt{-fno-semantic-interposition}: permite
-          inlinar \texttt{update\_cell} y el kernel completo directamente en el
-          bucle principal, eliminando el overhead de llamada en cada uno de los
-          $T_m = 1000$ pasos de medición. \texttt{mpicc} delega el linking a
-          \texttt{gcc}, por lo que \texttt{-flto} funciona correctamente con este
-          wrapper.
-
-    \item \texttt{-funroll-loops}: reduce el overhead del contador del bucle;
-          especialmente beneficioso para bloques locales pequeños que caben en
-          L1.
-
-    \item \texttt{-falign-loops=32}: alinea el inicio del bucle interior a un
-          boundary de línea de instrucción AVX2, evitando que el cuerpo del
-          bucle cruce dos líneas de caché de instrucciones.
-\end{itemize}
+Las optimizaciones aplicadas buscan exprimir el mismo kernel de cómputo, que es muy regular y tiene un perfil de acceso a memoria bastante predecible. Opciones como \texttt{-O3}, \texttt{-march=native} y \texttt{-flto} ayudan al compilador a vectorizar, incrustar funciones pequeñas y ajustar el código al procesador real en el que se ejecuta.
 
 % ---------------------------------------------------------------------------
 \subsection{Validador de corrección distribuido}
 % ---------------------------------------------------------------------------
 
-El validador \texttt{traffic\_validator\_mpi} ejecuta siete tests que deben
-pasar con cualquier número de procesos $P \in \{1, 2, 4\}$:
+Para asegurar que la implementación paralela reproduce correctamente el comportamiento esperado, se desarrolló un validador distribuido con varios casos de prueba. Estos casos cubren situaciones extremas y también escenarios donde la frontera periódica es crucial. Entre ellos se incluyen una carretera vacía, una carretera completamente ocupada, un carro aislado, el cruce correcto por el borde, la conservación del número de carros y la coincidencia con un estado calculado manualmente.
 
-\begin{enumerate}
-    \item \textbf{Carretera vacía.} Con densidad $\rho = 0$,
-          \texttt{global\_car\_count} $= 0$ y la velocidad debe ser exactamente
-          $0.0$.
-
-    \item \textbf{Carretera llena.} Con densidad $\rho = 1$, cada carro está
-          bloqueado y la velocidad debe ser exactamente $0.0$.
-
-    \item \textbf{Un solo carro.} Con un único carro en una carretera libre, la
-          velocidad debe ser exactamente $1.0$.
-
-    \item \textbf{Frontera periódica.} Un carro en la última celda global debe
-          aparecer en la celda~0 tras un paso, cruzando la frontera entre el
-          proceso $P-1$ y el proceso~0.
-
-    \item \textbf{Conservación del número de carros.} El conteo de celdas
-          ocupadas en el estado reunido con \texttt{road\_mpi\_gather\_cells}
-          debe ser constante durante 20 pasos.
-
-    \item \textbf{Coincidencia con referencia calculada a mano.} Para el estado
-          inicial $\{0, 1, 0, 0, 1, 0, 1, 0\}$ se calcula a mano el estado
-          esperado tras un paso aplicando la regla~\eqref{eq:kernel} con
-          condiciones periódicas y se compara contra el resultado distribuido.
-          Este test verifica simultáneamente la regla, el intercambio de halos
-          entre procesos y el gather.
-
-    \item \textbf{Avance exacto de un carro solitario.} Un carro en la celda~0
-          debe estar en la celda $t \bmod N$ tras $t$ pasos, verificando el
-          wrap-around completo a lo largo de $N$ iteraciones.
-\end{enumerate}
-
-Los tests que requieren comparar el estado global usan
-\texttt{road\_mpi\_gather\_cells} para reunir los datos en el rango~0, que
-evalúa la condición y transmite el resultado a todos los rangos con
-\texttt{MPI\_Bcast}. Esto garantiza que todos los procesos lleguen al mismo
-veredicto y que \texttt{MPI\_Finalize} se llame colectivamente sin interbloqueo.
-
-El estado inicial de cada test se inyecta con
-\texttt{road\_mpi\_create\_with\_state}, que acepta un arreglo global en el
-rango~0 y lo distribuye con el mismo \texttt{MPI\_Scatterv} que usa la
-inicialización aleatoria, permitiendo probar condiciones exactas sin depender
-del generador de números aleatorios.
+El validador reúne el estado global cuando es necesario y compara el resultado obtenido con el esperado. También verifica que todos los procesos lleguen a la misma conclusión, lo cual es importante para garantizar que la finalización de la simulación ocurra sin desincronizaciones.
 
 % ---------------------------------------------------------------------------
 \subsection{Despliegue en el clúster AWS}
 % ---------------------------------------------------------------------------
 
-Las pruebas se ejecutaron en un clúster de cuatro instancias EC2
-\texttt{c5.xlarge}, cada una con 4~vCPUs y 8~GiB de RAM. Todas las instancias
-pertenecen a la misma zona de disponibilidad y están conectadas dentro de la
-misma VPC privada de AWS, lo que garantiza latencias de red inferiores a
-$100\,\mu\mathrm{s}$ entre nodos y un ancho de banda de hasta 10~Gbps, más que
-suficiente para los halos de un byte por proceso y paso que intercambia este
-autómata.
+Las pruebas se ejecutaron sobre un clúster de cuatro instancias EC2 tipo \texttt{c5.xlarge}. Todas las máquinas pertenecen a la misma red privada de AWS, lo que proporciona una comunicación estable y con latencias bajas entre nodos. Para este problema, donde cada proceso solo intercambia halos de un byte por paso, la infraestructura de red resulta más que suficiente.
 
-\subsubsection{Directorio compartido por NFS}
+El entorno compartido se montó mediante NFS, de modo que todos los nodos accedieran al mismo directorio con binarios, archivo de hosts y resultados. Esto simplifica la ejecución y evita inconsistencias entre máquinas. La compilación se realiza desde el nodo principal, y luego las pruebas se lanzan con \texttt{mpirun} usando afinidad por núcleo para minimizar interferencias.
 
-El nodo principal monta un volumen EFS (\emph{Elastic File System}) y lo
-exporta por NFS al resto de los nodos en la ruta \texttt{/shared}. Allí se
-almacenan los binarios compilados, el \texttt{hostfile} y el directorio de
-resultados. De esta forma todos los nodos ejecutan exactamente el mismo binario
-sin necesidad de copiarlo manualmente, y los CSV de resultados se escriben
-directamente desde el nodo principal sin transferencias posteriores.
-
-\subsubsection{Compilación y configuración de OpenMPI}
-
-La compilación se realiza en el nodo principal con \texttt{mpicc} del paquete
-\texttt{openmpi-bin}:
-
-\begin{center}
-\texttt{make mpi mpi\_opt validator}
-\end{center}
-
-Los binarios resultantes se depositan en \texttt{/shared/bin}, visible por
-todos los nodos. El archivo \texttt{/shared/hostfile} declara cuántos procesos
-puede ejecutar cada nodo:
-
-\begin{center}
-\begin{verbatim}
-node0 slots=4
-node1 slots=4
-node2 slots=4
-node3 slots=4
-\end{verbatim}
-\end{center}
-
-Con cuatro nodos de cuatro núcleos cada uno, el barrido de procesos puede
-alcanzar hasta $P = 16$ sin sobresubscripción. Para las pruebas de hasta
-$P = 12$ del experimento de escalado siempre hay al menos un núcleo libre por
-nodo para el sistema operativo, reduciendo la interferencia en las mediciones.
-
-\subsubsection{Ejecución distribuida}
-
-Cada medición se lanza desde el nodo principal con:
-
-\begin{center}
-\texttt{mpirun -{}-hostfile /shared/hostfile -{}-bind-to core -{}-map-by core} \\
-\texttt{\quad -np $P$ /shared/bin/traffic\_mpi\_opt $N$ $\rho$ $T_{w,\max}$ $T_m$}
-\end{center}
-
-La opción \texttt{--bind-to core --map-by core} hace que OpenMPI asigne cada
-proceso a un núcleo físico distinto en orden round-robin entre nodos. Para
-$P \leq 4$ todos los procesos quedan en el nodo principal, eliminando el tráfico
-de red y mostrando la escalabilidad dentro de un único nodo. Para $P > 4$ los
-procesos se distribuyen entre nodos y el costo del intercambio de halos se vuelve
-medible en la latencia, aunque mínimo en el ancho de banda dado que cada proceso
-envía y recibe exactamente un byte por paso.
-
-\subsubsection{Topología de comunicación}
-
-Con la distribución por bloques~\eqref{eq:distribucion}, cada proceso
-intercambia halos únicamente con sus dos vecinos inmediatos en el anillo. El
-patrón de comunicación es una cadena de mensajes punto a punto de un byte, no
-un \emph{all-to-all}. En AWS, donde la latencia de red entre instancias en la
-misma zona de disponibilidad es inferior a $50\,\mu\mathrm{s}$, el costo de
-comunicación es despreciable comparado con el costo de cómputo del bloque local
-para $N \geq 10^5$.
+La topología de comunicación entre procesos es muy ligera: cada proceso solo conversa con sus dos vecinos inmediatos. No hay patrones costosos como \emph{all-to-all}; en realidad, el costo dominante está en el cómputo local, especialmente para tamaños de carretera grandes.
 
 % ---------------------------------------------------------------------------
 \subsection{Diseño del script de benchmark}
 % ---------------------------------------------------------------------------
 
-El script \texttt{bench\_traffic\_mpi.sh} actúa como harness de medición: su
-única responsabilidad es invocar los binarios con los parámetros correctos,
-capturar su salida y escribirla en un CSV. El análisis y la generación de
-gráficas son responsabilidad de \texttt{report.py}.
+El script de benchmark funciona como un orquestador de experimentos. Su tarea es lanzar las ejecuciones con los parámetros correctos, recoger los resultados y guardarlos en un archivo CSV. El análisis posterior y la generación de gráficos quedan fuera de ese script, con el fin de mantenerlo simple y reproducible.
 
-\subsubsection{Convención de la columna \texttt{np}}
+La columna \texttt{np} del CSV se usa para indicar el número de procesos MPI. Por convención, el valor cero representa la ejecución secuencial sin MPI, que sirve como referencia base para comparar el rendimiento. A partir de ahí, cada valor positivo corresponde a una ejecución paralela con el número respectivo de procesos.
 
-La columna \texttt{np} del CSV registra el número de procesos MPI usados. Por
-convención, $\mathtt{np} = 0$ indica la ejecución del binario secuencial
-\texttt{traffic\_seq\_mem\_opt} sin MPI, que sirve como línea de referencia
-absoluta del rendimiento de un único proceso sin overhead de comunicación.
-Para $\mathtt{np} \geq 1$ el binario MPI se lanza con \texttt{mpirun -np NP}.
+El techo de calentamiento se define de forma adaptativa para que escale con el tamaño del problema. Así se evita que instancias pequeñas desperdicien tiempo innecesario en calentamiento, mientras que las instancias grandes reciben suficiente margen para estabilizarse antes de comenzar la medición.
 
-\subsubsection{Techo de calentamiento adaptativo}
+El harness considera dos experimentos principales. El primero estudia escalabilidad variando simultáneamente el tamaño de la carretera y el número de procesos, manteniendo fija la densidad. El segundo fija una carretera grande y barre varias densidades para observar cómo cambia la velocidad promedio con el nivel de ocupación. En ambos casos, el objetivo es separar el efecto del paralelismo, el efecto del compilador y el efecto de la densidad sobre el rendimiento.
 
-El techo de pasos de calentamiento que el harness pasa a cada binario se
-calcula como:
-
-\begin{equation}
-    T_{w,\max} = \max\!\left(\frac{N}{10},\; 2000\right).
-    \label{eq:techo}
-\end{equation}
-
-El factor $N/10$ garantiza que el techo sea proporcional al tiempo que tarda
-una perturbación en recorrer la carretera completa. El piso de 2000 evita
-techos demasiado bajos para valores pequeños de $N$. El binario puede terminar
-antes si el criterio~\eqref{eq:criterio} se cumple, lo que ocurre en la
-práctica para densidades extremas en pocas centenas de pasos.
-
-\subsubsection{Matriz de configuraciones}
-
-El harness define dos experimentos que cubren las preguntas de rendimiento
-centrales del trabajo.
-
-El \textbf{experimento de escalado} mide todas las combinaciones de los seis
-valores de $N$ con los conteos de procesos $\{0, 1, 2, 4, 8, 12\}$ a densidad
-fija $\rho = 0.50$. Para $\mathtt{np} = 0$ se ejecuta el binario secuencial;
-para $\mathtt{np} \geq 1$ se ejecutan \texttt{traffic\_mpi} y
-\texttt{traffic\_mpi\_opt}, lo que permite separar la ganancia del paralelismo
-de la ganancia del compilador.
-
-El \textbf{experimento de densidad} fija un $N$ grande fuera del barrido
-principal (80 millones de celdas, 160~MB, claramente DRAM-bound) y barre cinco
-densidades $\{0.10, 0.30, 0.50, 0.70, 0.90\}$ con $\mathtt{np} \in \{0, 1, 4,
-8\}$. El objetivo es verificar que la velocidad asintótica $v_\infty$ es
-consistente entre configuraciones y que la distribución entre procesos no
-introduce sesgo en la curva velocidad-densidad.
-
-\subsubsection{Formato del CSV de resultados}
-
-El archivo \texttt{data.csv} tiene siete columnas:
-
-\begin{center}
-\begin{tabular}{ll}
-\hline
-Columna & Descripción \\
-\hline
-\texttt{impl}           & Binario usado (véase Tabla~\ref{tab:binarios_mpi}) \\
-\texttt{np}             & Número de procesos MPI (0 para variante secuencial) \\
-\texttt{road\_length}   & Tamaño de la carretera $N$ \\
-\texttt{density}        & Densidad inicial de carros $\rho$ \\
-\texttt{repetition}     & Índice de repetición (1 a 10) \\
-\texttt{wall\_time\_ms} & Tiempo máximo entre procesos, ecuación~\eqref{eq:tiempo_mpi} \\
-\texttt{avg\_velocity}  & Velocidad media $\bar{v}$ sobre los $T_m$ pasos \\
-\hline
-\end{tabular}
-\end{center}
-
-El tiempo reportado corresponde al proceso más lento conforme a la
-ecuación~\eqref{eq:tiempo_mpi}, lo que refleja el tiempo real de cada
-ejecución sincronizada y es el valor apropiado para calcular el speedup
-respecto a la línea de referencia secuencial.
+El archivo de resultados registra el binario usado, el número de procesos, el tamaño de la carretera, la densidad inicial, la repetición, el tiempo de ejecución y la velocidad promedio. El tiempo almacenado corresponde al proceso más lento, porque ese es el que determina la duración real de una ejecución sincronizada y, por tanto, el valor correcto para el cálculo de speedup.
