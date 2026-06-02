@@ -36,7 +36,7 @@ Este criterio se complementa con dos protecciones prácticas. Primero, se exige 
 \subsection{Modelo de distribución de datos}
 % ---------------------------------------------------------------------------
 
-Para paralelizar la simulación, la carretera se reparte entre $P$ procesos MPI en bloques contiguos. Cada proceso recibe un segmento continuo de celdas, con una distribución muy equilibrada: la diferencia entre el bloque más grande y el más pequeño nunca supera una celda. Esto es importante porque el trabajo por celda es uniforme, así que repartir de esta forma evita desbalances innecesarios.
+Para paralelizar la simulación, la carretera se reparte entre $P$ procesos MPI en bloques contiguos. Cada proceso recibe un segmento continuo de celdas, con una distribución muy equilibrada, la diferencia entre el bloque más grande y el más pequeño nunca supera una celda. Esto es importante porque el trabajo por celda es uniforme, así que repartir de esta forma evita desbalances innecesarios.
 
 El estado global se construye inicialmente en el proceso de rango cero y luego se distribuye a los demás procesos mediante \texttt{MPI\_Scatterv}. Esta estrategia simplifica la inicialización y permite que todos los rangos empiecen a trabajar con una parte coherente del mismo estado global. Para que la partición sea válida, el número de procesos no puede superar el número total de celdas; de lo contrario, algunos bloques quedarían vacíos y la topología circular del problema perdería sentido.
 
@@ -73,7 +73,7 @@ Este diseño no solo es correcto, sino también eficiente: reduce el tiempo ocio
 
 La actualización de un paso completo se organiza en varias fases. Primero se publican los intercambios de halos. Luego se calcula el interior del bloque local, que no depende de datos externos y por tanto puede procesarse de inmediato. Después se espera a que lleguen las fronteras, se actualizan las celdas borde y finalmente se realiza una reducción global para obtener el total de carros que avanzaron durante ese paso.
 
-Este orden tiene una intención clara: aprovechar al máximo el tiempo disponible mientras la red entrega los datos necesarios para los bordes. El interior del bloque suele ser la parte más grande del trabajo local, así que calcularlo mientras se completa la comunicación ayuda a esconder parte del costo de MPI.
+Este orden tiene una intención clara, se quiere aprovechar al máximo el tiempo disponible mientras la red entrega los datos necesarios para los bordes. El interior del bloque suele ser la parte más grande del trabajo local, así que calcularlo mientras se completa la comunicación ayuda a esconder parte del costo de MPI.
 
 La reducción global se hace con \texttt{MPI\_Allreduce}, de modo que todos los procesos terminan con el mismo valor de velocidad media en cada paso. Esto es fundamental para que el criterio de convergencia pueda evaluarse de forma idéntica en todos los rangos sin agregar una comunicación adicional.
 
@@ -98,7 +98,7 @@ $\;\longrightarrow\;$ intercambio de punteros
 \subsection{Propiedad SPMD del calentamiento}
 % ---------------------------------------------------------------------------
 
-Como todos los procesos reciben el mismo valor de velocidad en cada paso, el criterio de convergencia se evalúa de la misma manera en todos ellos. Esto permite que la fase de calentamiento siga un comportamiento SPMD consistente: cada proceso toma la misma decisión en el mismo instante, sin necesidad de sincronizaciones adicionales para declarar que el sistema ya se estabilizó.
+Como todos los procesos reciben el mismo valor de velocidad en cada paso, el criterio de convergencia se evalúa de la misma manera en todos ellos. Esto permite que la fase de calentamiento siga un comportamiento SPMD consistente, cada proceso toma la misma decisión en el mismo instante, sin necesidad de sincronizaciones adicionales para declarar que el sistema ya se estabilizó.
 
 Esta propiedad simplifica mucho la lógica de control y evita complicaciones al finalizar la simulación. También reduce el riesgo de bloqueos, porque todos los procesos avanzan de forma coherente hacia la misma condición de término.
 
@@ -138,22 +138,20 @@ El validador reúne el estado global cuando es necesario y compara el resultado 
 \subsection{Despliegue en el clúster AWS}
 % ---------------------------------------------------------------------------
 
-Las pruebas se ejecutaron sobre un clúster de cuatro instancias EC2 tipo \texttt{c5.xlarge}. Todas las máquinas pertenecen a la misma red privada de AWS, lo que proporciona una comunicación estable y con latencias bajas entre nodos. Para este problema, donde cada proceso solo intercambia halos de un byte por paso, la infraestructura de red resulta más que suficiente.
+Las pruebas se ejecutaron sobre un clúster de tres instancias EC2 tipo \texttt{c5.xlarge}. Todas las máquinas pertenecen a la misma red privada de AWS, lo que proporciona una comunicación estable y con latencias bajas entre nodos. Para este problema, donde cada proceso solo intercambia halos de un byte por paso, la infraestructura de red resulta más que suficiente.
 
 El entorno compartido se montó mediante NFS, de modo que todos los nodos accedieran al mismo directorio con binarios, archivo de hosts y resultados. Esto simplifica la ejecución y evita inconsistencias entre máquinas. La compilación se realiza desde el nodo principal, y luego las pruebas se lanzan con \texttt{mpirun} usando afinidad por núcleo para minimizar interferencias.
 
-La topología de comunicación entre procesos es muy ligera: cada proceso solo conversa con sus dos vecinos inmediatos. No hay patrones costosos como \emph{all-to-all}; en realidad, el costo dominante está en el cómputo local, especialmente para tamaños de carretera grandes.
+La topología de comunicación entre procesos es muy ligera donde cada proceso solo conversa con sus dos vecinos inmediatos.
 
 % ---------------------------------------------------------------------------
 \subsection{Diseño del script de benchmark}
 % ---------------------------------------------------------------------------
 
-El script de benchmark funciona como un orquestador de experimentos. Su tarea es lanzar las ejecuciones con los parámetros correctos, recoger los resultados y guardarlos en un archivo CSV. El análisis posterior y la generación de gráficos quedan fuera de ese script, con el fin de mantenerlo simple y reproducible.
+El script de benchmark funciona como un orquestador de experimentos. Su tarea es lanzar las ejecuciones con los parámetros correctos, recoger los resultados y guardarlos en un archivo CSV.
 
-La columna \texttt{np} del CSV se usa para indicar el número de procesos MPI. Por convención, el valor cero representa la ejecución secuencial sin MPI, que sirve como referencia base para comparar el rendimiento. A partir de ahí, cada valor positivo corresponde a una ejecución paralela con el número respectivo de procesos.
+La columna \texttt{np} del CSV se usa para indicar el número de procesos MPI. Se usaron valores para np 2, 3, 4, 5 y 6, cada valor corresponde a una ejecución paralela con el número respectivo de procesos.
 
 El techo de calentamiento se define de forma adaptativa para que escale con el tamaño del problema. Así se evita que instancias pequeñas desperdicien tiempo innecesario en calentamiento, mientras que las instancias grandes reciben suficiente margen para estabilizarse antes de comenzar la medición.
-
-El harness considera dos experimentos principales. El primero estudia escalabilidad variando simultáneamente el tamaño de la carretera y el número de procesos, manteniendo fija la densidad. El segundo fija una carretera grande y barre varias densidades para observar cómo cambia la velocidad promedio con el nivel de ocupación. En ambos casos, el objetivo es separar el efecto del paralelismo, el efecto del compilador y el efecto de la densidad sobre el rendimiento.
 
 El archivo de resultados registra el binario usado, el número de procesos, el tamaño de la carretera, la densidad inicial, la repetición, el tiempo de ejecución y la velocidad promedio. El tiempo almacenado corresponde al proceso más lento, porque ese es el que determina la duración real de una ejecución sincronizada y, por tanto, el valor correcto para el cálculo de speedup.
