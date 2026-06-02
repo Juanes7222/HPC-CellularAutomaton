@@ -1,4 +1,5 @@
 \section{Pruebas}
+\label{pruebas}
 
 En esta sección se presentan las pruebas realizadas para evaluar el rendimiento de los algoritmos implementados. Se llevaron a cabo experimentos tanto en modo secuencial como en modo paralelo, utilizando diferentes tamaños de entrada y distintas configuraciones de optimización con el objetivo de comparar su impacto sobre el tiempo de ejecución.
 
@@ -13,3 +14,8 @@ Para la optimización por compilador se utilizó el siguiente conjunto de bander
     \item \texttt{-falign-loops=32}: alinea los bucles en fronteras de 32 bytes para mejorar el aprovechamiento de la caché de instrucciones y la eficiencia del flujo de ejecución.
     \item \texttt{-fomit-frame-pointer}: elimina el puntero de marco cuando no es necesario, liberando un registro adicional y reduciendo sobrecarga en funciones simples o críticas.
 \end{itemize}
+
+
+\input{sections/tests/secuencial.tex}
+\input{sections/tests/mpi_noopt.tex}
+\input{sections/tests/mpi_opt.tex}
