@@ -77,8 +77,8 @@ CSV_FILE_SEQ   = os.path.join(RESULTS_DIR, "data.csv")
 CSV_FILE_MPI    = os.path.join(RESULTS_DIR_MPI, "data.csv")
 
 SCALING_DENSITY      = 0.50
-N_VALUES             = [32_000, 256_000, 2_000_000, 8_000_000, 20_000_000, 40_000_000]
-DENSITY_EXPERIMENT_N = 80_000_000
+N_VALUES             = [32000, 256000, 2000000, 8000000, 20000000, 40000000]
+DENSITY_EXPERIMENT_N = 80000000
 DENSITY_VALUES       = [0.10, 0.30, 0.50, 0.70, 0.90]
 
 # =============================================================================
