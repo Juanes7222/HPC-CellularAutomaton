@@ -4,3 +4,58 @@
 \section{Conclusiones}
 \label{sec:Conclusiones}
 
+\begin{enumerate}
+
+\item
+
+La primera observación relevante surge al comparar las cuatro variantes secuenciales evaluadas. Los resultados obtenidos fueron cercanos a lo que se vio en el Reto 2, mientras que la optimización de compilador por sí sola produce una mejora modesta, cercana al 10\%, y la optimización de memoria aislada incluso introduce una ligera regresión de rendimiento, la combinación de ambas genera una aceleración extraordinaria. La versión que incorpora simultáneamente optimización de compilador y alineación de memoria alcanza speedups promedio cercanos a $65\times$ respecto a la implementación base.
+
+El análisis del porqué esto ocurre se encuentra en nuestro trabajo anterior.
+
+\item
+
+Al comparar la mejor versión secuencial optimizada con las implementaciones MPI compiladas sin optimizaciones, se observa que el paralelismo distribuido no logra compensar los costos adicionales introducidos por la comunicación entre procesos. Para tamaños pequeños, como $N=8\,000$, la versión MPI con dos procesos resulta aproximadamente 76 veces más lenta que la referencia secuencial optimizada.
+
+La causa principal es que el tiempo invertido en inicialización, distribución de datos, intercambio de halos y operaciones colectivas domina completamente el tiempo de cómputo local. Dado que el trabajo realizado por cada proceso es muy reducido, el costo de comunicación se convierte en el factor predominante. A medida que aumenta el tamaño del problema, especialmente para $N \geq 2$ millones de celdas, comienza a apreciarse una reducción progresiva de los tiempos al incrementar el número de procesos, lo que indica que el paralelismo empieza a amortizar parcialmente el overhead de MPI.
+
+\item
+
+La incorporación de las mismas optimizaciones utilizadas en la versión secuencial mejora significativamente el desempeño de las implementaciones MPI. El caso más evidente es el de dos procesos, cuyo tiempo para $N=8\,000$ disminuye de aproximadamente 28.6 ms a 12.9 ms.
+
+Sin embargo, aun con estas mejoras, la versión paralela continúa siendo considerablemente más lenta que la secuencial optimizada. Para cargas pequeñas, la diferencia sigue siendo superior a un orden de magnitud. Además, se observa una alta variabilidad en las mediciones para configuraciones ligeras, alcanzando coeficientes de variación cercanos al 39\%. Este comportamiento es consistente con la naturaleza compartida de la infraestructura en la nube y con la sensibilidad de las aplicaciones de baja carga a fluctuaciones de latencia en la red.
+
+En tamaños grandes la situación mejora progresivamente. Por ejemplo, con $N=10$ millones de celdas y seis procesos, el tiempo se reduce hasta aproximadamente 4.6 segundos. Aunque esta cifra sigue siendo superior a la obtenida por la versión secuencial optimizada, la tendencia evidencia que el paralelismo comienza a resultar beneficioso cuando el volumen de trabajo crece suficientemente.
+
+\item
+
+La comparación final muestra que el rendimiento no depende únicamente del número de procesos, sino de la combinación entre paralelismo y optimización de compilación. Un resultado particularmente interesante es que una configuración MPI sin optimización pero con seis procesos alcanza tiempos similares a los obtenidos por una configuración MPI optimizada con únicamente dos procesos.
+
+Esto demuestra que aumentar el número de procesos puede compensar parcialmente la ausencia de optimizaciones de compilación. No obstante, la mejor estrategia sigue siendo combinar ambas técnicas, ya que la optimización del código reduce significativamente el trabajo realizado por cada proceso y permite aprovechar mejor los recursos disponibles.
+
+\item
+
+De manera general, los resultados muestran que MPI sin optimización de compilación no es una alternativa eficiente para este problema en las instancias evaluadas. El overhead de comunicación supera sistemáticamente el beneficio del paralelismo cuando el tamaño del problema es pequeño o moderado.
+
+Aun así, sí se observa un punto de mejora conforme crece el tamaño de la carretera. Esto sugiere que el paralelismo comienza a volverse competitivo solo cuando el trabajo por proceso es suficientemente grande como para amortizar el costo de comunicación. En otras palabras, el cruce entre la versión secuencial optimizada y la versión MPI depende fuertemente del tamaño del problema y todavía no se alcanza en los casos más pequeños.
+
+\item
+
+El principal cuello de botella de la implementación distribuida no es el volumen de datos intercambiados, sino la latencia asociada a las operaciones de comunicación y sincronización. Los halos transmitidos son mínimos, de modo que el costo dominante proviene del tiempo que toma coordinar los procesos y esperar a que todos avancen al mismo ritmo.
+
+Por eso, aunque la estrategia de solapamiento mediante \texttt{MPI\_Irecv} y \texttt{MPI\_Isend} es correcta desde el punto de vista algorítmico, su beneficio resulta limitado para cargas pequeñas y medianas. El cómputo interior del bloque local no siempre alcanza para esconder de forma efectiva la latencia de red, y la mejora real solo se vuelve visible cuando el tamaño del problema es lo bastante grande.
+
+\item
+
+Al analizar la escalabilidad de la implementación MPI, es necesario considerar primero las características del clúster utilizado. Las pruebas se ejecutaron sobre tres instancias EC2 tipo \texttt{m7i-flex.large}: un nodo principal y dos nodos de trabajo. Cada instancia dispone de 2 vCPUs, equivalentes a un núcleo físico con dos hilos mediante Hyper-Threading. Debido a esta configuración, el comportamiento del algoritmo no depende únicamente del número de procesos MPI, sino también de cómo estos se distribuyen entre los nodos físicos. Cuando la ejecución requiere comunicación entre nodos diferentes, aparecen costos asociados a la red que no están presentes cuando los procesos comparten memoria dentro de una misma máquina.
+
+Los resultados muestran que el cambio más significativo ocurre al pasar de configuraciones que pueden ejecutarse localmente dentro de un nodo a configuraciones que requieren comunicación distribuida. Para tamaños pequeños, como $N=8\,000$, el tiempo pasa de aproximadamente 28.6 ms con dos procesos a cerca de 932 ms con tres procesos. Este incremento no corresponde a una degradación progresiva del algoritmo, sino a la aparición de un nuevo costo dominante: la sincronización entre nodos a través de la red.
+
+En este problema cada iteración requiere intercambios de halos y operaciones colectivas como \texttt{MPI\_Allreduce}. Cuando el trabajo computacional por proceso es muy pequeño, el tiempo dedicado a estas comunicaciones supera ampliamente el tiempo invertido en actualizar las celdas del autómata. Como consecuencia, la latencia de la red termina dominando el tiempo total de ejecución.
+
+\item
+
+Una vez que la ejecución ya involucra múltiples nodos, aumentar el número de procesos sí produce mejoras de rendimiento, especialmente para los tamaños de carretera más grandes. En el caso de $N=10$ millones de celdas con optimización de compilación, el tiempo disminuye progresivamente al pasar de tres a seis procesos, alcanzando una aceleración cercana a $2.8\times$ respecto a la configuración de dos procesos.
+
+Aunque esta mejora demuestra que el trabajo se distribuye correctamente entre los procesos disponibles, el speedup obtenido permanece por debajo del ideal teórico. Esto puede explicarse mediante la Ley de Amdahl. 
+
+\end{enumerate}
