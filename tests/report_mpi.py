@@ -77,7 +77,7 @@ CSV_FILE_SEQ   = os.path.join(RESULTS_DIR, "data.csv")
 CSV_FILE_MPI    = os.path.join(RESULTS_DIR_MPI, "data.csv")
 
 SCALING_DENSITY      = 0.50
-N_VALUES             = [32000, 256000, 2000000, 8000000, 20000000, 40000000]
+N_VALUES             = [8000, 64000, 500000, 2000000, 5000000, 10000000]
 DENSITY_EXPERIMENT_N = 80000000
 DENSITY_VALUES       = [0.10, 0.30, 0.50, 0.70, 0.90]
 
@@ -417,7 +417,7 @@ def _title_row(ws, text, cols, row=1):
 def _save_fig(fig, name: str) -> str:
     os.makedirs(CHARTS_DIR, exist_ok=True)
     path = os.path.join(CHARTS_DIR, name)
-    fig.savefig(path, dpi=180, bbox_inches="tight")
+    fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -919,20 +919,20 @@ def main():
     ct0 = chart_time(
         serial_impls, avg_data, sizes,
         "Variantes secuenciales — tiempo de ejecución",
-        "fig_seq_tiempo.png",
+        "time_secuencial.png",
     )
     cs0 = chart_speedup(
         Impl(NOMBRE_SEQ, 0),
         [i for i in serial_impls if i != Impl(NOMBRE_SEQ, 0)],
         avg_data, sizes,
         "Variantes secuenciales — speedup vs Serial Base",
-        "fig_seq_speedup.png",
+        "speedup_secuencial.png",
     ) if Impl(NOMBRE_SEQ, 0) in avg_data else chart_speedup(
         best_seq,
         [i for i in serial_impls if i != best_seq],
         avg_data, sizes,
         "Variantes secuenciales — speedup vs referencia",
-        "fig_seq_speedup.png",
+        "speedup_secuencial.png",
     )
 
     # -----------------------------------------------------------------
@@ -941,18 +941,18 @@ def main():
     ct1 = chart_time(
         [best_seq] + mpi_variants, avg_data, sizes,
         "MPI sin optimización de compilador — tiempo de ejecución",
-        "fig_mpi_tiempo.png",
+        "time_mpi_noopt.png",
     )
     cs1 = chart_speedup(
         best_seq, mpi_variants, avg_data, sizes,
         "MPI sin optimización de compilador — speedup",
-        "fig_mpi_speedup.png",
+        "speedup_mpi_noopt.png",
         note="Speedup esperado ≤ número de procesos (escalado ideal)",
     )
     csc1 = chart_scaling(
         best_seq, mpi_variants, avg_data, sizes,
         "MPI sin optimización — escalabilidad fuerte por nivel de memoria",
-        "fig_mpi_escalabilidad.png",
+        "scaling_mpi_noopt.png",
     ) if mpi_variants else None
 
     # -----------------------------------------------------------------
@@ -961,17 +961,17 @@ def main():
     ct2 = chart_time(
         [best_seq] + mpi_opt_variants, avg_data, sizes,
         "MPI con optimización de compilador — tiempo de ejecución",
-        "fig_mpi_opt_tiempo.png",
+        "time_mpi_opt.png",
     )
     cs2 = chart_speedup(
         best_seq, mpi_opt_variants, avg_data, sizes,
         "MPI con optimización de compilador — speedup",
-        "fig_mpi_opt_speedup.png",
+        "speedup_mpi_opt.png",
     )
     csc2 = chart_scaling(
         best_seq, mpi_opt_variants, avg_data, sizes,
         "MPI con optimización — escalabilidad fuerte por nivel de memoria",
-        "fig_mpi_opt_escalabilidad.png",
+        "scaling_mpi_opt.png",
     ) if mpi_opt_variants else None
 
     # -----------------------------------------------------------------
@@ -981,14 +981,14 @@ def main():
     ct3 = chart_time(
         final_impls, avg_data, sizes,
         "Comparación final — mejor de cada estrategia",
-        "fig_final_tiempo.png",
+        "time_final.png",
     )
     cs3 = chart_speedup(
         best_seq,
         [i for i in final_impls if i != best_seq],
         avg_data, sizes,
         "Comparación final — speedup de los mejores vs referencia secuencial",
-        "fig_final_speedup.png",
+        "speedup_final.png",
     )
 
     # -----------------------------------------------------------------
@@ -1006,12 +1006,12 @@ def main():
         c_dt = chart_density_time(
             density_df, best_seq_den, mpi_opt_den,
             f"Densidad — tiempo de ejecución  (N = {_size_label(DENSITY_EXPERIMENT_N)})",
-            "fig_densidad_tiempo.png",
+            "time_density.png",
         )
         c_dv = chart_density_velocity(
             density_df, best_seq_den, mpi_opt_den,
             f"Densidad — velocidad media del autómata  (N = {_size_label(DENSITY_EXPERIMENT_N)})",
-            "fig_densidad_velocidad.png",
+            "velocity_density.png",
         )
 
     # -----------------------------------------------------------------
